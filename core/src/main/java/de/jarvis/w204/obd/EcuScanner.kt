@@ -61,24 +61,38 @@ object ReadOnly {
 }
 
 /** Zugriff auf den Adapter, der nur Leseanfragen und die Zieladresse (7E0–7E7) erlaubt. */
-class SafeElm internal constructor(private val e: Elm327) {
+class SafeElm internal constructor(private val exchange: (String, Long) -> String) {
+    internal constructor(e: Elm327) : this(e::send)
+    private fun send(cmd: String, timeoutMs: Long = 1500) = exchange(cmd, timeoutMs)
     private var header: String? = null
+    private var verifySource = false
 
     fun target(h: String) {
         require(h.matches(Regex("7E[0-7]|7DF"))) { "Unerlaubte Adresse $h" }
         if (h != header) {
-            e.send("ATSH$h")
+            // The receiver filter alone is not proof: clones can acknowledge but ignore it.
+            headersOn = true
+            check(send("ATH1").trim().equals("OK", true)) { "Adapter liefert keine prüfbaren Antwortadressen" }
+            check(send("ATSH$h").trim().equals("OK", true)) { "Adapter lehnt Zieladresse $h ab" }
             // Nur Antworten genau dieses Steuergeräts annehmen (Antwort-ID = Anfrage-ID + 8).
             // Manche ELM-Klone ignorieren sonst die Adresse, und es antwortet immer der Motor.
-            if (h == "7DF") runCatching { e.send("ATCRA") }
-            else runCatching { e.send("ATCRA" + "%03X".format(h.toInt(16) + 8)) }
+            if (h == "7DF") runCatching { send("ATCRA") }
+            else runCatching { send("ATCRA" + "%03X".format(h.toInt(16) + 8)) }
             header = h
         }
+        verifySource = true
     }
 
     fun request(cmd: String, timeoutMs: Long = 1500): String {
         if (!ReadOnly.isAllowed(cmd)) throw ReadOnlyViolation(cmd)
-        return e.send(cmd, timeoutMs)
+        return checked(send(cmd, timeoutMs))
+    }
+
+    private fun checked(raw: String): String {
+        if (!verifySource) return raw // Adapter test deliberately preserves all raw senders.
+        val h = header ?: return "NO DATA"
+        val ids = if (h == "7DF") 0x7E8..0x7EF else (h.toInt(16) + 8)..(h.toInt(16) + 8)
+        return ids.flatMap { CanDiagnostic.messages(raw, it) }.joinToString("\r").ifEmpty { "NO DATA" }
     }
 
     /**
@@ -87,7 +101,7 @@ class SafeElm internal constructor(private val e: Elm327) {
      * und alle anderen sind über diesen Weg nicht erreichbar, request() sperrt Dienst 10 komplett.
      * Liefert true, wenn das Steuergerät zugestimmt hat (Antwort 50 03 / 50 01).
      */
-    fun sessionRaw(extended: Boolean): String = e.send(if (extended) "1003" else "1001", 1500)
+    fun sessionRaw(extended: Boolean): String = checked(send(if (extended) "1003" else "1001", 1500))
 
     fun session(extended: Boolean): Boolean {
         val raw = sessionRaw(extended)
@@ -109,20 +123,22 @@ class SafeElm internal constructor(private val e: Elm327) {
         if (c == "ATST19" || c == "ATST0C") shortTimeout = true
         if (c == "ATST32") shortTimeout = false
         if (c == "ATH0") headersOn = false
-        return e.send(c, timeoutMs)
+        verifySource = false
+        return send(c, timeoutMs)
     }
 
     private var headersOn = false
     private var shortTimeout = false
 
     internal fun restore() {
-        if (headersOn) { runCatching { e.send("ATH0") }; headersOn = false }
-        if (shortTimeout) { runCatching { e.send("ATST32") }; shortTimeout = false }
+        if (headersOn) { runCatching { send("ATH0") }; headersOn = false }
+        if (shortTimeout) { runCatching { send("ATST32") }; shortTimeout = false }
         if (header != null && header != "7DF") {
-            runCatching { e.send("ATCRA") }
-            runCatching { e.send("ATSH7DF") }
+            runCatching { send("ATCRA") }
+            runCatching { send("ATSH7DF") }
         }
         header = null
+        verifySource = false
     }
 }
 
@@ -224,7 +240,7 @@ class EcuScanner(private val context: Context, private val obd: ObdManager, priv
     private data class Task(val ecu: Ecu, val service: Int, val range: IntRange, val resumable: Boolean)
 
     private val ecus = listOf(Ecu("Motor", "7E0"), Ecu("Getriebe", "7E1"))
-    private val prefs = context.getSharedPreferences("ecu_scan", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("ecu_scan_verified_v1", Context.MODE_PRIVATE)
     private val hits = LinkedHashMap<String, Hit>()
     private val idents = mutableListOf<String>()
     private val rows = mutableListOf<String>()
@@ -265,7 +281,7 @@ class EcuScanner(private val context: Context, private val obd: ObdManager, priv
 
     // ---------- Speicher (damit ein Scan fortgesetzt werden kann)
 
-    private fun hitsFile() = File(context.filesDir, "scan_hits.csv")
+    private fun hitsFile() = File(context.filesDir, "scan_hits_verified_v1.csv")
 
     private fun load() {
         runCatching {
