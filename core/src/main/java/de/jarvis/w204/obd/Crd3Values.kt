@@ -81,6 +81,14 @@ object Crd3Values {
         d(0x6081, "dpfRegen", "Regenerationsstatus (1 = nicht aktiv)", "", Group.DPF, 0.0, 255.0, 1) { it.toDouble() },
     )
 
+    /**
+     * Weitere Kennungen derselben Familie ohne belegte Formel. Sie werden nur als Rohantwort
+     * festgehalten (kein berechneter Wert), damit sie spaeter gegen bekannte Werte dieses
+     * Fahrzeugs eingeordnet werden koennen. 6043/6135/609F nennt WiCAN_W906 als offene
+     * Russ-Kandidaten; die uebrigen sind als Leseabfragen fuer CRD3 in Fremdsoftware beobachtet.
+     */
+    val rawOnly: List<Int> = listOf(0x6042, 0x6043, 0x6135, 0x609F, 0x60B7, 0x60B8, 0x5015, 0x2014, 0x2022, 0x4047, 0x4048, 0x2050, 0x224E)
+
     /** Jede Kennung nur einmal anfragen, auch wenn zwei Werte daraus berechnet werden. */
     val requests: List<Int> = all.map { it.id }.distinct()
     fun forId(id: Int): List<Did> = all.filter { it.id == id }

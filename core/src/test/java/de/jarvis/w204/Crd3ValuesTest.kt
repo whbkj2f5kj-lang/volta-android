@@ -18,6 +18,10 @@ class Crd3ValuesTest {
         }
     }
 
+    @Test fun rawCandidatesAreReadOnlyToo() {
+        for (id in Crd3Values.rawOnly) assertTrue(ReadOnly.isAllowed("22%04X".format(id)))
+    }
+
     @Test fun documentedExamplesDecode() {
         // MBLink: 62 20 07 05 FC = 11,96875 V
         assertEquals(11.96875, did("voltage").value("62200705FC")!!, 1e-9)

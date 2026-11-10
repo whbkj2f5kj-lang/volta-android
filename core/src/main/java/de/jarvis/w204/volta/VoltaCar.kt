@@ -209,6 +209,14 @@ object VoltaCar {
             }
         }
         lines += ""
+        lines += "[ROH, ohne Formel]"
+        for (id in Crd3Values.rawOnly) {
+            val request = "22%04X".format(id)
+            val pdu = try { elm.request(request, 1500).trim().lineSequence().firstOrNull()?.trim() ?: "NO DATA" }
+                      catch (t: Exception) { "FEHLER " + (t.message ?: t.javaClass.simpleName) }
+            lines += "$request  roh $pdu"
+        }
+        lines += ""
         lines += "Antworten: $positive positiv, $negative abgelehnt, $silent ohne Antwort (von ${Crd3Values.requests.size})."
         val pairs = Crd3Check.compare(values, obd)
         for (p in pairs) lines += "Abgleich %s: CRD3 %.1f / OBD %.1f -> %s".format(Locale.GERMANY, p.label, p.crd3, p.obd, if (p.ok) "passt" else "WEICHT AB")
