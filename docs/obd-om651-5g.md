@@ -30,3 +30,51 @@ Mit einem bekannten funktionierenden Mercedes-Diagnosegerät Motor-/Getriebesteu
 Voltas OBD-Transport ist momentan Bluetooth Classic SPP. Ein USB-Adapter benötigt einen eigenen OBD-Transport und kann nicht allein durch Anstecken verwendet werden. USB-TPMS ist ein anderer Treiber/Protokollpfad. Der vLinker FS wird vom Hersteller primär für FORScan/Ford/Mazda beworben; das ist kein Nachweis für Zugriff auf diese Mercedes-Getriebevariante.
 
 Quellen: [ELM327-Datenblatt](https://elmelectronics.com/wp-content/uploads/2020/05/ELM327DSL.pdf), [Vgate vLinker FS USB](https://vgatemall.com/products-detail/i-19/), [Ultimate NAG52 (Ersatzsteuergerät, nicht OEM-PID-Nachweis)](https://github.com/rnd-ash/ultimate-nag52-fw).
+
+## MBLink-Abgleich (10.11.2026; implementiert als Forschungsgrundlage)
+
+Quellen: [MBLink Mercedes](https://github.com/Infiltrator-Projects/MBLink/blob/main/docs/MERCEDES.md),
+[MBLink DID Lab](https://github.com/Infiltrator-Projects/MBLink/blob/main/docs/DID_LAB.md),
+[MBLink ELM327](https://github.com/Infiltrator-Projects/MBLink/blob/main/docs/ELM327.md).
+
+Voltas `SafeElm` unterstützt zusätzlich zu den unveränderten funktionalen/physikalischen
+OBD-Routen eine **explizite Allowlist dokumentierter Mercedes-TX/RX-Paare**.
+Die Antwort wird nur anerkannt, wenn ihr tatsächlicher CAN-Absender der
+erwarteten RX-ID entspricht. Ein `OK` auf `ATSH` oder `ATCRA` beweist
+noch **keine** korrekte CAN-Übertragung durch den Adapter.
+
+| Diagnoseroute TX → RX | Herkunft / behauptete Familie | Belegstatus |
+| --- | --- | --- |
+| `602 → 480` | Mercedes Produktions-VIN-Route, ECU unklassifiziert | Externe Dokumentation |
+| `607 → 587` | Mercedes Produktions-VIN-Route, ECU unklassifiziert | Externe Dokumentation |
+| `612 → 482` | EIS_204/EIS_212 | Externe Dokumentation |
+| `632 → 486` | ABR2XT/ESP | Externe Dokumentation |
+| `652 → 48A` | HU_204 | Externe Dokumentation |
+| `6B2 → 496` | EPS212 | Externe Dokumentation; Einbau im W204 unbekannt |
+| `7E1 → 7E9` | GS/Getriebe, KWP `21 30` | Berichteter Kandidat; bei diesem Fahrzeug bislang keine Antwort |
+
+Die Tabelle ist **keine ECU-Bestandsliste** des Fahrzeugs. Sie wird **nicht**
+automatisch über alle Einträge abgefragt. Die vorhandene ELM-Bluetooth-SPP-Anbindung,
+Adaptertests, Quellenprüfung und Exportlogik bleiben bestehen. Es wird insbesondere
+kein Mercedes-Deep-Scan aus der MBLink-Dokumentation ungeprüft übernommen.
+
+Weitere Kandidaten bleiben getrennt von der produktiven Live-Anzeige:
+
+- Delphi CRD3 `22 2007`: dokumentierte Antwort `62 20 07 05 FC`
+  entspricht `0x05FC / 128 = 11,96875 V`. Ein strikter Decoder ist als
+  Forschungsbaustein vorhanden, wird jedoch **nicht** automatisch abgefragt.
+  Es ist nicht verifiziert, dass das konkrete W204-Motorsteuergerät diese DID unterstützt.
+- GS `21 30`: vorhandener Versuch über `7E1 → 7E9` blieb ohne nachgewiesene
+  Antwort. Ungeprüfte Bytepositionen oder die Formel `L − 50` dürfen nicht als
+  bestätigte Getriebetemperatur dargestellt werden.
+- OM651 DPF-Ruß-/Aschebeladung, Differenzdruck und Regenerationsstatus:
+  MBLink führt diese Größen als `corroborated-unmapped`. Es gibt dort
+  **noch keine** für diesen W204 bestätigte DID-/Skalierungsdefinition.
+
+### Nächste Verifikation
+
+Zuerst die genaue Motor-ECU-Teilenummer und die Getriebe-ECU-Variante über ein
+bewährtes Mercedes-Diagnosesystem ermitteln. Dann für **einen** Messwert die
+tatsächliche TX/RX-Paarung, vollständige Antwort-PDU, Kodierung und plausible
+Referenzwerte dokumentieren. Erst danach den Wert für die Live-Anzeige freigeben.
+Keine weiteren pauschalen PID- oder CAN-Bereichsscans.
