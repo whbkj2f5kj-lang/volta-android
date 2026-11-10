@@ -26,6 +26,10 @@
 #ifdef Q_OS_ANDROID
 #include <QJniEnvironment>
 #include <QJniObject>
+// android_system.cpp
+QString voltaPortSetBrightness(int percent);
+bool voltaPortMediaAccess();
+void voltaPortOpenAndroidSettings(const QString &action);
 #endif
 
 namespace {
@@ -88,6 +92,7 @@ class AndroidPort : public QObject
     Q_PROPERTY(QVariantMap links READ links NOTIFY linksChanged)
     Q_PROPERTY(QVariantList targets READ slotList CONSTANT)
     Q_PROPERTY(bool android READ isAndroid CONSTANT)
+    Q_PROPERTY(bool mediaAccess READ mediaAccess NOTIFY mediaAccessChanged)
 public:
     explicit AndroidPort(QObject *parent) : QObject(parent)
     {
@@ -97,8 +102,11 @@ public:
         m_iconDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/android_icons");
         QDir().mkpath(m_iconDir);
         connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState st) {
-            if (st == Qt::ApplicationActive) refresh();   // nach Installieren/Entfernen von Apps
+            if (st != Qt::ApplicationActive) return;
+            refresh();   // nach Installieren/Entfernen von Apps
+            updateMediaAccess();   // nach der Rueckkehr aus Androids Einstellungen
         });
+        QMetaObject::invokeMethod(this, &AndroidPort::updateMediaAccess, Qt::QueuedConnection);
         QMetaObject::invokeMethod(this, &AndroidPort::refresh, Qt::QueuedConnection);
     }
 
@@ -123,6 +131,33 @@ public:
         return true;
 #else
         return qEnvironmentVariableIsSet("VOLTA_PORT_FAKEAPPS");
+#endif
+    }
+
+    bool mediaAccess() const { return m_mediaAccess; }
+    void updateMediaAccess()
+    {
+#ifdef Q_OS_ANDROID
+        const bool ok = voltaPortMediaAccess();
+        if (ok != m_mediaAccess) { m_mediaAccess = ok; emit mediaAccessChanged(); }
+#endif
+    }
+    // Androids Seite "Benachrichtigungszugriff" (fuer das Musik-Widget)
+    Q_INVOKABLE void openMediaAccess()
+    {
+#ifdef Q_OS_ANDROID
+        voltaPortOpenAndroidSettings(QStringLiteral("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"));
+#endif
+    }
+    // Voltas Helligkeitsregler -> Android
+    Q_INVOKABLE void setBrightness(int percent)
+    {
+#ifdef Q_OS_ANDROID
+        const QString mode = voltaPortSetBrightness(qBound(5, percent, 100));
+        static QString said;
+        if (mode != said) { said = mode; qInfo().noquote() << "[system] brightness via" << mode; }
+#else
+        Q_UNUSED(percent);
 #endif
     }
 
@@ -291,6 +326,7 @@ public:
 signals:
     void appsChanged();
     void linksChanged();
+    void mediaAccessChanged();
 
 private:
     void saveLinks()
@@ -331,6 +367,7 @@ private:
     QHash<QString, QString> m_links;
     QString m_iconDir;
     bool m_loading = false;
+    bool m_mediaAccess = true;
 };
 
 #ifdef Q_OS_ANDROID

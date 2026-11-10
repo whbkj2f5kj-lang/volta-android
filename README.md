@@ -10,7 +10,6 @@ Unter **Releases → „Volta OS (Android-Port)“**:
 
 - `volta-arm32.apk` – für das Radio (32-Bit-Android)
 - `volta-arm64.apk` – für 64-Bit-Geräte
-- `volta-x86_64.apk` – für den Android-Emulator am PC
 
 Jede Änderung in diesem Repo baut die APKs automatisch neu (Reiter **Actions**).
 

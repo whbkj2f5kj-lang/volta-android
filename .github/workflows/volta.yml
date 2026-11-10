@@ -3,7 +3,13 @@ name: Volta Android-Port
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'LICENSE']
   workflow_dispatch:
+
+# ein neuer Push bricht den laufenden Bau ab, statt sich dahinter einzureihen
+concurrency:
+  group: volta-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -30,7 +36,6 @@ jobs:
           - { name: linux, qtarch: linux_gcc_64, abi: '' }
           - { name: arm64, qtarch: android_arm64_v8a, abi: arm64-v8a }
           - { name: arm32, qtarch: android_armv7, abi: armeabi-v7a }
-          - { name: x86_64, qtarch: android_x86_64, abi: x86_64 }   # fuer den Android-Emulator am PC
     steps:
       - id: cache
         uses: actions/cache@v4
@@ -175,13 +180,14 @@ jobs:
     needs: maplibre
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
+    env:
+      HAS_KS: ${{ secrets.VOLTA_KEYSTORE_B64 != '' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - { qtarch: android_arm64_v8a, name: arm64 }
           - { qtarch: android_armv7, name: arm32 }
-          - { qtarch: android_x86_64, name: x86_64 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache/restore@v4
@@ -221,14 +227,26 @@ jobs:
             yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;$NDK_VERSION" "platforms;android-35" "build-tools;35.0.0" > /dev/null && break || sleep 20
           done
           test -d $ANDROID_SDK_ROOT/ndk/$NDK_VERSION
-      - name: Schlüssel (bleibt zwischen Builds gleich, damit Updates ohne Deinstallieren gehen)
+      # Signierschluessel: dauerhaft als Secret VOLTA_KEYSTORE_B64 (sonst Updates nur mit Deinstallieren).
+      # Ohne Secret: Notloesung ueber den Zwischenspeicher (verfaellt nach 7 Tagen ohne Bau).
+      - name: Schlüssel (Notlösung)
         id: key
+        if: env.HAS_KS != 'true'
         uses: actions/cache@v4
         with:
           path: volta.jks
           key: volta-keystore-v1
-      - if: steps.key.outputs.cache-hit != 'true'
-        run: keytool -genkeypair -keystore volta.jks -storepass voltaport -keypass voltaport -alias volta -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Volta Port"
+      - name: Schlüssel
+        env:
+          KS: ${{ secrets.VOLTA_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS" ]; then
+            echo "$KS" | base64 -d > volta.jks
+            echo "dauerhafter Signierschlüssel aus dem Secret"
+          elif [ ! -f volta.jks ]; then
+            echo "::warning::kein Secret VOLTA_KEYSTORE_B64 - neuer Schlüssel, Update nur mit Deinstallieren"
+            keytool -genkeypair -keystore volta.jks -storepass voltaport -keypass voltaport -alias volta -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Volta Port"
+          fi
       - name: Bauen
         run: |
           python3 volta-android/port.py upstream
@@ -263,3 +281,29 @@ jobs:
           cp build.log out/android_${{ matrix.name }}_build.log 2>/dev/null || true
           cp volta-${{ matrix.name }}.apk out/ 2>/dev/null || true
           gh release upload volta out/* --clobber
+
+  # Release-Seite: Versionsnummer, Datum und die letzten Aenderungen
+  hinweise:
+    needs: android
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 15 }
+      - name: Release-Text
+        run: |
+          {
+            echo "## Volta OS für Android – Version 0.1.${{ github.run_number }}"
+            echo
+            echo "Gebaut am $(TZ=Europe/Berlin date '+%d.%m.%Y um %H:%M') (Stand \`${GITHUB_SHA::7}\`)."
+            echo "Die Version steht auf dem Radio unter Einstellungen › Apps › Volta OS."
+            echo
+            echo "**Für das Radio:** \`volta-arm32.apk\` · für 64-Bit-Geräte: \`volta-arm64.apk\`"
+            echo
+            echo "### Letzte Änderungen"
+            git log -10 --format='- %s (%ad)' --date=format:'%d.%m. %H:%M'
+            echo
+            echo "Android-Port von [VoltaOS](https://github.com/Omardigio/VoltaOS) (GPL-3.0)."
+          } > notes.md
+          cat notes.md
+          gh release edit volta --notes-file notes.md --title "Volta OS 0.1.${{ github.run_number }}"

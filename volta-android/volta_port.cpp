@@ -193,6 +193,38 @@ static void voltaLogOpen()
 
 void voltaPortStartMapProxy();   // volta_mapproxy.cpp
 void voltaPortRegisterApps();    // android_apps.cpp
+#ifdef Q_OS_ANDROID
+void voltaPortStartSystemService();   // android_system.cpp
+
+// ── Schutz vor Absturz-Schleifen durch das 3D-Auto ──────────────────────────
+// Volta laedt das Auto bei jedem Start. Stuerzt die App dabei ab (zu grosses Modell, Grafik-
+// treiber), waere sie als Startbildschirm unbrauchbar. Darum: waehrend der ersten 45 s nach dem
+// Start liegt eine Merker-Datei. Ist sie beim naechsten Start noch da, ist Volta in dieser Zeit
+// abgestuerzt -> das Auto wird beiseitegelegt (car/*.glb -> *.glb.crashed), Volta startet ohne.
+static void voltaPortCarGuard()
+{
+    const QString carDir = QDir::homePath() + QStringLiteral("/.config/volta/car");
+    const QString marker = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/car_loading");
+    const QStringList cars = QDir(carDir).entryList({QStringLiteral("auto*.glb")}, QDir::Files);
+    if (QFileInfo::exists(marker)) {
+        QFile::remove(marker);
+        for (const QString &c : cars) {
+            QFile::remove(carDir + QLatin1Char('/') + c + QStringLiteral(".crashed"));
+            QFile::rename(carDir + QLatin1Char('/') + c, carDir + QLatin1Char('/') + c + QStringLiteral(".crashed"));
+        }
+        if (!cars.isEmpty())
+            qWarning() << "[port] Volta crashed while starting with the 3D car: the car is put aside, load it again or use a lighter model";
+        return;
+    }
+    if (cars.isEmpty()) return;
+    QDir().mkpath(QFileInfo(marker).absolutePath());
+    QFile f(marker);
+    if (f.open(QIODevice::WriteOnly)) f.write("1");
+    f.close();
+    QTimer::singleShot(45000, qApp, [marker]() { QFile::remove(marker); qInfo() << "[port] 3D car loaded fine"; });
+    QObject::connect(qApp, &QCoreApplication::aboutToQuit, [marker]() { QFile::remove(marker); });
+}
+#endif
 
 static void voltaPortPrepare()
 {
@@ -217,6 +249,8 @@ static void voltaPortPrepare()
 #ifdef Q_OS_ANDROID
     voltaLogOpen();
     voltaPortStartMapProxy();
+    voltaPortStartSystemService();
+    voltaPortCarGuard();
     const QString src = QStringLiteral("assets:/volta");
     const QString dst = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/volta");
     const QString stampFile = dst + QStringLiteral("/.port_stamp");

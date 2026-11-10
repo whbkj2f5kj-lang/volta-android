@@ -77,9 +77,12 @@ endif()
 if(ANDROID)
     # Standort ueber Android statt serieller GPS-Maus
     get_target_property(_volta_src VoltaOS SOURCES)
-    list(REMOVE_ITEM _volta_src src/nav/GpsService.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/nav/GpsService.cpp)
+    list(REMOVE_ITEM _volta_src src/nav/GpsService.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/nav/GpsService.cpp
+                                src/media/MprisManager.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/media/MprisManager.cpp)
     set_property(TARGET VoltaOS PROPERTY SOURCES ${_volta_src})
-    target_sources(VoltaOS PRIVATE ${VOLTA_PORT_DIR}/android_gps.cpp)
+    # Standort, Musik, WLAN/Bluetooth, Lautstaerke und Helligkeit ueber Android
+    target_sources(VoltaOS PRIVATE ${VOLTA_PORT_DIR}/android_gps.cpp ${VOLTA_PORT_DIR}/android_media.cpp
+                                   ${VOLTA_PORT_DIR}/android_system.cpp)
 endif()
 # Karte: MapLibre fuer Qt (selbst gebaut, siehe Workflow)
 if(VOLTA_MAPLIBRE_DIR)
@@ -208,5 +211,63 @@ patch("qml/SpeedCluster.qml", [
 ])
 patch("qml/StatusBar.qml", [
     (r'property bool   showAirbag: true', 'property bool   showAirbag: false   // Android-Port: kein Signal vom Auto', 1),
+])
+
+# ── Lautstaerke ueber Android (Original: pactl) ──────────────────────────────
+patch("src/core/SystemHelper.cpp", [
+    (r'^void SystemHelper::setVolume\(int percent\)\n\{\n',
+     '#ifdef Q_OS_ANDROID\nvoid voltaPortSetVolume(int percent);\nint voltaPortGetVolume();\n#endif\n'
+     'void SystemHelper::setVolume(int percent)\n{\n#ifdef Q_OS_ANDROID\n    voltaPortSetVolume(qBound(0, percent, 100));\n    return;\n#endif\n', 1),
+    (r'^int SystemHelper::getVolume\(\)\n\{\n',
+     'int SystemHelper::getVolume()\n{\n#ifdef Q_OS_ANDROID\n    return voltaPortGetVolume();\n#endif\n', 1),
+])
+
+patch("qml/Main.qml", [
+    # Helligkeit: Android statt schwarzer Abdunkel-Flaeche
+    (r'^    property int  screenBrightness: 100\n',
+     '    property int  screenBrightness: 100\n'
+     '    onScreenBrightnessChanged: if (AndroidPort.android) AndroidPort.setBrightness(screenBrightness)\n', 1),
+    (r'opacity: root\.screenBrightness >= 100 \? 0 : \(1 - root\.screenBrightness / 100\) \* 0\.85',
+     'opacity: AndroidPort.android ? 0 : (root.screenBrightness >= 100 ? 0 : (1 - root.screenBrightness / 100) * 0.85)', 1),
+    # Lautstaerke von Lenkrad/Radio-Tasten in Voltas Anzeige uebernehmen
+    (r'^    property int  callSeconds: 0\n',
+     '    property int _portSysVol: -1\n'
+     '    Timer {\n        interval: 1500; repeat: true; running: AndroidPort.android\n'
+     '        // nur Aenderungen von aussen (Lenkrad, Radio-Tasten) uebernehmen; Android rundet auf seine Stufen,\n'
+     '        // darum kleine Abweichungen nach Voltas eigenem Regler ignorieren\n'
+     '        onTriggered: { var v = sysHelper.getVolume(); if (v < 0 || v > 100 || v === root._portSysVol) return;\n'
+     '                       if (root._portSysVol >= 0 && Math.abs(v - root.volume) > 4) root.volume = v; root._portSysVol = v }\n'
+     '    }\n'
+     '    property int  callSeconds: 0\n', 1),
+])
+
+# ── Musik-Widget: was auf dem Radio laeuft (Quelle "android", siehe android_media.cpp) ──
+patch("qml/MediaHub.qml", [
+    (r'^    function providerName\(p\) \{\n        return ',
+     '    function providerName(p) {\n        if (p === "android") return Mpris.activeIdentity || qsTr("Music")\n        return ', 1),
+    (r'^    function providerIcon\(p\) \{\n        return ',
+     '    function providerIcon(p) {\n        if (p === "android") return ((Mpris.players["android"] || {}).icon) || "qrc:/VoltaApp/icons/localmusic.svg"\n        return ', 1),
+    (r'^    function providerAppId\(p\) \{\n        return ',
+     '    function providerAppId(p) {\n        if (p === "android") return "android:" + ((Mpris.players["android"] || {}).pkg || "")\n        return ', 1),
+    (r'^    readonly property string activeProvider: \{\n',
+     '    readonly property string activeProvider: {\n'
+     '        if (hub.mprisReady && Mpris.activeSource === "android" && Mpris.hasActive) return "android"\n', 1),
+    (r'^    readonly property var nowPlaying: \{\n        var p = hub\.activeProvider\n',
+     '    readonly property var nowPlaying: {\n        var p = hub.activeProvider\n'
+     '        if (p === "android") {\n'
+     '            var am = hub.mprisState(p) || {}\n'
+     '            return { provider: p, title: am.title || Mpris.activeIdentity, subtitle: am.artist || "", cover: am.artUrl || "",\n'
+     '                     isPlaying: !!am.playing, progressMs: am.positionMs || 0, durationMs: am.lengthMs > 0 ? am.lengthMs : 1,\n'
+     '                     isVideo: false, canSeek: !!am.canSeek }\n'
+     '        }\n', 1),
+])
+
+# ── Einstellungen > App: Hinweis, wenn der Musik-Zugriff fehlt ──
+patch("qml/Settings.qml", [
+    (r'(\n(\s*)text: qsTr\("Hide the apps you don\'t use: they disappear from the drawer but stay installed, and you can always bring them back from here\."\)\n(\s*)color: root\.txtHint; font\.pixelSize: 12; wrapMode: Text\.WordWrap\n(\s*)\})',
+     r'\1\n\4Text {\n\4    visible: AndroidPort.android && !AndroidPort.mediaAccess\n\4    width: parent.width\n'
+     r'\4    text: qsTr("Music widget: allow Volta to see what other apps are playing") + "  ›"\n'
+     r'\4    color: root.blue; font.pixelSize: 13; wrapMode: Text.WordWrap\n'
+     r'\4    MouseArea { anchors.fill: parent; anchors.margins: -8; onClicked: AndroidPort.openMediaAccess() }\n\4}', 1),
 ])
 print("port.py: ok")
