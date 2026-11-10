@@ -181,4 +181,28 @@ patch("qml/Settings.qml", [
      '\n    PortLinkPopup {\n        id: portLinkPopup\n        anchors.fill: parent\n        z: 9999\n'
      '        txt: root.txt; txtHint: root.txtHint; accent: root.blue\n    }\n}\n', 1),
 ])
+
+# ── Tacho-Bereich: Tempo vom GPS; Anzeigen ohne echte Daten (Gang, Licht, Gurt, Airbag) ausblenden ──
+patch("qml/CarPanel.qml", [
+    (r'^(\s*)gear:       "P"\n\s*speedValue: "0"\n\s*speedUnit:  "km/h"\n\s*headlightOn: true\n\s*seatbeltOn:  true\n',
+     r'\1property real portKmh: 0\n'
+     r'\1speedValue: Math.round(portKmh).toString()\n'
+     r'\1speedUnit:  "km/h"\n'
+     r'\1headlightOn: false\n'
+     r'\1seatbeltOn:  false\n'
+     r'\1Connections {\n'
+     r'\1    target: Gps\n'
+     r'\1    function onUpdated(d) { var k = (d.speed || 0) * 3.6; speedCluster.portKmh = k < 2 ? 0 : k; portSpeedStale.restart() }\n'
+     r'\1}\n'
+     r'\1Timer { id: portSpeedStale; interval: 3000; onTriggered: speedCluster.portKmh = 0 }\n', 1),
+    (r'fillPct: 0 // To be connected to the real GPS if you want',
+     'fillPct: Math.min(100, speedCluster.portKmh / 2)   // Android-Port: GPS-Tempo, voll bei 200 km/h', 1),
+])
+patch("qml/SpeedCluster.qml", [
+    (r'^(\s*)Row \{\n(\s*)x: cluster\.rhd \? col\.width - width : 0\n(\s*)spacing: 7\n',
+     r'\1Row {\n\2visible: false   // Android-Port: Gang ist nicht bekannt\n\2x: cluster.rhd ? col.width - width : 0\n\3spacing: 7\n', 1),
+])
+patch("qml/StatusBar.qml", [
+    (r'property bool   showAirbag: true', 'property bool   showAirbag: false   // Android-Port: kein Signal vom Auto', 1),
+])
 print("port.py: ok")
