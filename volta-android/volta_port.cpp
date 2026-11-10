@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QUrl>
 #include <QDebug>
 
 #include <QGuiApplication>
@@ -33,22 +34,28 @@ QString voltaPortLocalFile(const QString &path)
 {
 #ifdef Q_OS_ANDROID
     if (!path.startsWith(QLatin1String("content:"))) return path;
+    // gleiche Auswahl schon kopiert (Volta prueft die Datei erst und laedt sie dann)
+    static QString lastUri, lastOut;
+    if (path == lastUri && QFileInfo::exists(lastOut)) return lastOut;
     QFile in(path);
     if (!in.open(QIODevice::ReadOnly)) { qWarning().noquote() << "[port] cannot open" << path; return path; }
-    const QByteArray head = in.peek(4);
-    QString name = QFileInfo(path).completeBaseName();
-    if (name.isEmpty() || name.size() > 60 || name.contains(QLatin1Char('/')) || name.contains(QLatin1Char('%'))
-        || name.contains(QLatin1Char(':')))
-        name = QStringLiteral("car");
-    QString ext = QFileInfo(path).suffix().toLower();
-    if (head == "glTF") ext = QStringLiteral("glb");
-    if (ext.isEmpty() || ext.size() > 5) ext = QStringLiteral("bin");
+    // Inhalt lesen (peek() geht bei Android-Adressen nicht immer); die Endung kommt aus dem Inhalt,
+    // weil content://-Adressen meist keinen Dateinamen haben
+    QByteArray first = in.read(1 << 20);
+    QString ext;
+    if (first.startsWith("glTF")) ext = QStringLiteral("glb");
+    else if (first.trimmed().startsWith("{")) ext = QStringLiteral("gltf");
+    else {
+        ext = QFileInfo(QUrl::fromPercentEncoding(path.toUtf8())).suffix().toLower();
+        if (ext.isEmpty() || ext.size() > 5) ext = QStringLiteral("bin");
+    }
     const QString dir = QDir::tempPath() + QStringLiteral("/volta_pick");
     QDir(dir).removeRecursively();
     QDir().mkpath(dir);
-    const QString out = dir + QLatin1Char('/') + name + QLatin1Char('.') + ext;
+    const QString out = dir + QStringLiteral("/car.") + ext;
     QFile to(out);
     if (!to.open(QIODevice::WriteOnly)) return path;
+    to.write(first);
     while (!in.atEnd()) {
         const QByteArray chunk = in.read(1 << 20);
         if (chunk.isEmpty()) break;
@@ -56,122 +63,22 @@ QString voltaPortLocalFile(const QString &path)
     }
     to.close();
     qInfo().noquote() << "[port] picked file copied to" << out << to.size() << "bytes";
+    lastUri = path; lastOut = out;
     return out;
 #else
     return path;
 #endif
 }
 
+// Blender (zum Verkleinern/Umwandeln von 3D-Modellen) gibt es auf Android nicht
+bool voltaPortNoBlender()
+{
 #ifdef Q_OS_ANDROID
-// ── Fehlerprotokoll ──────────────────────────────────────────────────────────
-// Alles, was Volta ausgibt, landet zusaetzlich in einer Datei, die man ohne Root mit dem
-// Dateimanager findet: Android/data/de.jarvis.volta/files/volta_log.txt (der vorige Lauf: volta_log_alt.txt).
-// Bis der Ordner bekannt ist (erst nach dem App-Start), wird im Speicher gesammelt.
-static QtMessageHandler g_prevHandler = nullptr;
-static QBasicMutex g_logMutex;
-static QByteArray *g_logPending = nullptr;
-static int g_logFd = -1;
-static qint64 g_logBytes = 0;
-static const qint64 kLogMax = 2 * 1024 * 1024;
-
-static void voltaLogRaw(const QByteArray &line)
-{
-    if (g_logFd < 0) {
-        if (!g_logPending) g_logPending = new QByteArray;
-        if (g_logPending->size() < 256 * 1024) g_logPending->append(line);
-        return;
-    }
-    if (g_logBytes > kLogMax) return;
-    g_logBytes += line.size();
-    if (g_logBytes > kLogMax) {
-        static const char cut[] = "[port] log limit reached, further output dropped\n";
-        (void)::write(g_logFd, cut, sizeof(cut) - 1);
-        return;
-    }
-    (void)::write(g_logFd, line.constData(), size_t(line.size()));
-}
-
-static void voltaLogHandler(QtMsgType type, const QMessageLogContext &ctx, const QString &msg)
-{
-    const char *lvl = type == QtDebugMsg ? "D" : type == QtInfoMsg ? "I" : type == QtWarningMsg ? "W"
-                    : type == QtCriticalMsg ? "E" : "F";
-    QByteArray line = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss.zzz")).toLatin1();
-    line += ' '; line += lvl; line += ' '; line += msg.toUtf8(); line += '\n';
-    {
-        QMutexLocker lock(&g_logMutex);
-        voltaLogRaw(line);
-    }
-    if (g_prevHandler) g_prevHandler(type, ctx, msg);
-}
-
-static struct sigaction g_oldSig[32];
-static void voltaCrashSig(int sig)
-{
-    // nur write(): im Signal-Handler ist sonst nichts erlaubt
-    if (g_logFd >= 0) {
-        static const char a[] = "\n[port] CRASH: the app was killed by signal ";
-        (void)::write(g_logFd, a, sizeof(a) - 1);
-        char num[4] = { char('0' + (sig / 10) % 10), char('0' + sig % 10), '\n', 0 };
-        (void)::write(g_logFd, num, 3);
-        static const char b[] = "[port] (11 = memory access, 6 = abort, 7 = bus error, 4 = illegal instruction, 8 = arithmetic)\n";
-        (void)::write(g_logFd, b, sizeof(b) - 1);
-        ::fsync(g_logFd);
-    }
-    if (sig > 0 && sig < 32) sigaction(sig, &g_oldSig[sig], nullptr);   // Android schreibt danach seinen eigenen Absturzbericht
-    else signal(sig, SIG_DFL);
-    raise(sig);
-}
-
-// sehr frueh (beim Laden der Bibliothek), damit auch die ersten Zeilen von main() ankommen
-static const int g_logInstalled = []() { g_prevHandler = qInstallMessageHandler(voltaLogHandler); return 1; }();
-
-static void voltaLogOpen()
-{
-    QString dir;
-    const QJniObject ctx = QNativeInterface::QAndroidApplication::context();
-    if (ctx.isValid()) {
-        const QJniObject f = ctx.callObjectMethod("getExternalFilesDir", "(Ljava/lang/String;)Ljava/io/File;", nullptr);
-        if (f.isValid()) dir = f.callObjectMethod("getAbsolutePath", "()Ljava/lang/String;").toString();
-    }
-    if (dir.isEmpty()) dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir().mkpath(dir);
-    const QString file = dir + QStringLiteral("/volta_log.txt");
-    const QString old = dir + QStringLiteral("/volta_log_alt.txt");
-    QFile::remove(old);
-    QFile::rename(file, old);
-    const int fd = ::open(QFile::encodeName(file).constData(), O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0644);
-    QByteArray head = "Volta OS Android port, build " VOLTA_PORT_STAMP "\n";
-    head += "started " + QDateTime::currentDateTime().toString(Qt::ISODate).toUtf8() + "\n";
-    head += "device: " + QJniObject::getStaticObjectField("android/os/Build", "MANUFACTURER", "Ljava/lang/String;").toString().toUtf8()
-          + " " + QJniObject::getStaticObjectField("android/os/Build", "MODEL", "Ljava/lang/String;").toString().toUtf8()
-          + ", " + QSysInfo::prettyProductName().toUtf8() + ", cpu " + QSysInfo::currentCpuArchitecture().toUtf8()
-          + " (app built for " + QSysInfo::buildCpuArchitecture().toUtf8() + ")\n";
-    head += "log file: " + file.toUtf8() + "\n----\n";
-    {
-        QMutexLocker lock(&g_logMutex);
-        g_logFd = fd;
-        voltaLogRaw(head);
-        if (g_logPending) { voltaLogRaw(*g_logPending); delete g_logPending; g_logPending = nullptr; }
-    }
-    for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE}) {
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
-        sa.sa_handler = voltaCrashSig;
-        sigemptyset(&sa.sa_mask);
-        sigaction(sig, &sa, &g_oldSig[sig]);
-    }
-    // Bildschirm und Grafik: erst wenn die Oberflaeche steht
-    QTimer::singleShot(4000, qApp, []() {
-        if (auto *g = qobject_cast<QGuiApplication *>(qApp)) {
-            if (QScreen *sc = g->primaryScreen())
-                qInfo().noquote() << "[port] screen" << sc->size().width() << "x" << sc->size().height()
-                                  << "scale" << sc->devicePixelRatio() << "refresh" << sc->refreshRate() << "Hz";
-            qInfo().noquote() << "[port] windows open:" << g->allWindows().size();
-        }
-    });
-    QObject::connect(qApp, &QCoreApplication::aboutToQuit, []() { qInfo() << "[port] app is closing normally"; });
-}
+    return true;
+#else
+    return false;
 #endif
+}
 
 void voltaPortStartMapProxy();   // volta_mapproxy.cpp
 void voltaPortRegisterApps();    // android_apps.cpp

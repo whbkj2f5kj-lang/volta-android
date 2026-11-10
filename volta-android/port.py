@@ -121,8 +121,12 @@ patch("src/main.cpp", [
 ])
 # Android-Dateiauswahl liefert content://-Adressen: vor dem Einlesen in eine echte Datei kopieren
 patch("src/core/CarModelManager.cpp", [
-    (r'^#include "CarModelManager.h"\n', '#include "CarModelManager.h"\nQString voltaPortLocalFile(const QString &path);\n', 1),
+    (r'^#include "CarModelManager.h"\n',
+     '#include "CarModelManager.h"\nQString voltaPortLocalFile(const QString &path);\nbool voltaPortNoBlender();\n', 1),
     (r"QString p = srcPath;", "QString p = voltaPortLocalFile(srcPath);", 2),
+    # "Verkleinern und laden" braucht Blender: auf Android die .glb so laden, wie sie ist
+    (r"if \(!lighten && p\.endsWith\(QLatin1String\(\"\.glb\"\), Qt::CaseInsensitive\)\)",
+     'if ((!lighten || voltaPortNoBlender()) && p.endsWith(QLatin1String(".glb"), Qt::CaseInsensitive))', 1),
 ])
 
 # ── Android-Apps in Voltas eigenem App-Drawer und in Einstellungen > Apps ──────
