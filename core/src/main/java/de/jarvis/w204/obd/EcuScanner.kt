@@ -65,22 +65,45 @@ class SafeElm internal constructor(private val exchange: (String, Long) -> Strin
     internal constructor(e: Elm327) : this(e::send)
     private fun send(cmd: String, timeoutMs: Long = 1500) = exchange(cmd, timeoutMs)
     private var header: String? = null
+    private var responseId: Int? = null
     private var verifySource = false
 
+
+    /**
+     * Standard 11-bit OBD physical address, or the functional 7DF broadcast.
+     * The original scanner's caller contract stays unchanged.
+     */
     fun target(h: String) {
         require(h.matches(Regex("7E[0-7]|7DF"))) { "Unerlaubte Adresse $h" }
-        if (h != header) {
-            // The receiver filter alone is not proof: clones can acknowledge but ignore it.
-            headersOn = true
+        if (h == "7DF") {
+            selectRoute(h, null)
+        } else {
+            selectRoute(h, h.toInt(16) + 8)
+        }
+    }
+
+    /**
+     * MBLink/CAESAR-derived documented manufacturer routes. Not a generic CAN
+     * transmitter: only explicitly catalogued, independently sourced pairs
+     * are allowed. No session changes, write services or live polling here.
+     */
+    fun targetRoute(route: MercedesDiagnostics.Route) {
+        require(route in MercedesDiagnostics.documentedRoutes) { "Nicht belegte Mercedes-Route: $route" }
+        selectRoute("%03X".format(route.tx), route.rx)
+    }
+
+    private fun selectRoute(tx: String, rx: Int?) {
+        if (header != tx || responseId != rx || !verifySource) {
+            // Never trust ATCRA alone: clones can acknowledge filters but ignore them.
             check(send("ATH1").trim().equals("OK", true)) { "Adapter liefert keine prüfbaren Antwortadressen" }
-            check(send("ATSH$h").trim().equals("OK", true)) { "Adapter lehnt Zieladresse $h ab" }
-            // Nur Antworten genau dieses Steuergeräts annehmen (Antwort-ID = Anfrage-ID + 8).
-            // Manche ELM-Klone ignorieren sonst die Adresse, und es antwortet immer der Motor.
-            if (h == "7DF") runCatching { send("ATCRA") }
-            else runCatching { send("ATCRA" + "%03X".format(h.toInt(16) + 8)) }
-            header = h
+            check(send("ATSH$tx").trim().equals("OK", true)) { "Adapter lehnt Zieladresse $tx ab" }
+            val filter = if (rx == null) "ATCRA" else "ATCRA%03X".format(rx)
+            check(send(filter).trim().equals("OK", true)) { "Adapter lehnt Empfangsfilter $filter ab" }
+            header = tx
+            responseId = rx
         }
         verifySource = true
+        headersOn = true
     }
 
     fun request(cmd: String, timeoutMs: Long = 1500): String {
@@ -91,7 +114,10 @@ class SafeElm internal constructor(private val exchange: (String, Long) -> Strin
     private fun checked(raw: String): String {
         if (!verifySource) return raw // Adapter test deliberately preserves all raw senders.
         val h = header ?: return "NO DATA"
-        val ids = if (h == "7DF") 0x7E8..0x7EF else (h.toInt(16) + 8)..(h.toInt(16) + 8)
+        val ids = if (h == "7DF") 0x7E8..0x7EF else {
+            val expected = responseId ?: return "NO DATA"
+            expected..expected
+        }
         return ids.flatMap { CanDiagnostic.messages(raw, it) }.joinToString("\r").ifEmpty { "NO DATA" }
     }
 
@@ -118,7 +144,7 @@ class SafeElm internal constructor(private val exchange: (String, Long) -> Strin
         val ok = c in setOf("ATI", "AT@1", "ATDP", "ATDPN", "ATH1", "ATH0", "ATCRA", "ATST0C", "ATST19", "ATST32") ||
             c.matches(Regex("ATSH7E[0-7]|ATSH7DF|ATCRA7E[89A-F]"))
         require(ok) { "Befehl im Test nicht erlaubt: $cmd" }
-        if (c.startsWith("ATSH")) header = c.removePrefix("ATSH")
+        if (c.startsWith("ATSH")) { header = c.removePrefix("ATSH"); responseId = null }
         if (c == "ATH1") headersOn = true
         if (c == "ATST19" || c == "ATST0C") shortTimeout = true
         if (c == "ATST32") shortTimeout = false
@@ -138,6 +164,7 @@ class SafeElm internal constructor(private val exchange: (String, Long) -> Strin
             runCatching { send("ATSH7DF") }
         }
         header = null
+        responseId = null
         verifySource = false
     }
 }
