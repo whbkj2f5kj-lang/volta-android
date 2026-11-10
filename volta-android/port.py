@@ -324,7 +324,7 @@ patch("qml/Settings.qml", [
 patch("qml/Settings.qml", [
     (r'"Arcade", qsTr\("System"\)\]', '"Arcade", qsTr("System"), qsTr("Vehicle")]', 1),
     (r'"bluetooth", "apps", "directions_car", "sports_esports", "settings"\]',
-     '"bluetooth", "apps", "directions_car", "sports_esports", "settings", "directions_car"]', 1),
+     '"bluetooth", "apps", "directions_car", "sports_esports", "settings", "car"]', 1),
     (r'^(\s*)// ══════ PAGINA: SISTEMA ══════\n',
      r'\1// ══════ PAGINA: VEHICLE (Android-Port: OBD, nur lesend) ══════\n'
      r'\1Column {\n'
