@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QGeoCoordinate>
 #include <QGeoPositionInfo>
 #include <QGeoPositionInfoSource>
@@ -15,9 +16,15 @@
 
 static QGeoPositionInfoSource *g_src = nullptr;
 static qint64 g_lastFixMs = 0;
+static QElapsedTimer g_clock;
+static qint64 g_fixId = 0;
+static qint64 g_lastMeasurement = -1;
+static qint64 g_measurementAge = 0;
+static bool g_speedValid = false, g_bearingValid = false, g_accuracyValid = false;
 
 GpsService::GpsService(QObject *parent) : QObject(parent)
 {
+    g_clock.start();
     m_tick = new QTimer(this);
     m_tick->setInterval(100);                       // 10 Meldungen pro Sekunde, wie im Original
     connect(m_tick, &QTimer::timeout, this, &GpsService::broadcast);
@@ -57,20 +64,31 @@ void GpsService::tryOpen()
     connect(g_src, &QGeoPositionInfoSource::positionUpdated, this, [this](const QGeoPositionInfo &info) {
         const QGeoCoordinate c = info.coordinate();
         if (!c.isValid()) return;
+        const qint64 age = info.timestamp().isValid() ? info.timestamp().msecsTo(QDateTime::currentDateTimeUtc()) : 0;
+        if (age < -1000 || age > 6000) return; // keine alte Startposition als neuen Fix ausgeben
+        const qint64 stamp = info.timestamp().toMSecsSinceEpoch();
+        if (info.timestamp().isValid() && stamp == g_lastMeasurement) return;
+        g_lastMeasurement = stamp;
+        g_measurementAge = qMax(qint64(0), age);
+        g_speedValid = false; g_bearingValid = false; g_accuracyValid = false;
+        m_speed = 0; m_accuracy = -1;
         m_lat = c.latitude();
         m_lon = c.longitude();
         if (c.type() == QGeoCoordinate::Coordinate3D) m_altitude = c.altitude();
         if (info.hasAttribute(QGeoPositionInfo::GroundSpeed)) {
             const double v = info.attribute(QGeoPositionInfo::GroundSpeed);
-            if (std::isfinite(v) && v >= 0) m_speed = v;
+            if (std::isfinite(v) && v >= 0) { m_speed = v; g_speedValid = true; }
         }
         if (info.hasAttribute(QGeoPositionInfo::Direction)) {
             const double b = info.attribute(QGeoPositionInfo::Direction);
-            if (std::isfinite(b)) m_bearing = b;
+            if (std::isfinite(b) && b >= 0 && b <= 360) { m_bearing = b; g_bearingValid = true; }
         }
-        if (info.hasAttribute(QGeoPositionInfo::HorizontalAccuracy))
+        if (info.hasAttribute(QGeoPositionInfo::HorizontalAccuracy)) {
             m_accuracy = info.attribute(QGeoPositionInfo::HorizontalAccuracy);
-        g_lastFixMs = QDateTime::currentMSecsSinceEpoch();
+            g_accuracyValid = std::isfinite(m_accuracy) && m_accuracy >= 0;
+        }
+        g_lastFixMs = g_clock.elapsed();
+        ++g_fixId;
         const bool was = m_fix;
         m_fix = true;
         if (!was) {
@@ -91,7 +109,7 @@ void GpsService::broadcast()
 {
     if (!m_fix) return;
     // seit 6 s nichts Neues (Tunnel, Ortung aus): nicht weiter die alte Position als frisch melden
-    if (QDateTime::currentMSecsSinceEpoch() - g_lastFixMs > 6000) {
+    if (g_clock.elapsed() - g_lastFixMs + g_measurementAge > 6000) {
         m_fix = false;
         return;
     }
@@ -109,6 +127,11 @@ void GpsService::broadcast()
     d.insert(QStringLiteral("altitude"), m_altitude);
     d.insert(QStringLiteral("sats"), m_sats);
     d.insert(QStringLiteral("fix"), true);
+    d.insert(QStringLiteral("fixId"), g_fixId);
+    d.insert(QStringLiteral("ageMs"), g_clock.elapsed() - g_lastFixMs + g_measurementAge);
+    d.insert(QStringLiteral("speedValid"), g_speedValid);
+    d.insert(QStringLiteral("bearingValid"), g_bearingValid);
+    d.insert(QStringLiteral("accuracyValid"), g_accuracyValid);
     emit updated(d);
 }
 

@@ -25,6 +25,19 @@ Jede Änderung in diesem Repo baut die APKs automatisch neu (Reiter **Actions**)
 | `volta-android/android/` | Android-Manifest (App + wählbarer Startbildschirm) |
 | `.github/workflows/volta.yml` | automatischer Bau |
 
+## Fahrzeug-Technik (Stufe 2)
+
+- Tempolimits aus OpenStreetMap, gespeist ausschliesslich von Voltas Android-GPS; Mapbox-Limits bleiben waehrend der Navigation als Rueckfall verfuegbar.
+- Vorhandenes Tempolimit-Schild und vorhandene Hinweiskarten, ohne Sprachausgabe.
+- Unter Einstellungen → Vehicle: OSM ein/aus, visuelle Warnungen und Warnschwelle.
+- Nur frische Geschwindigkeitswerte (OBD bevorzugt, sonst GPS). Unklare Strassen, geschaetzte Limits und nicht auswertbare Bedingungen loesen keine OSM-Warnung aus.
+- OSM-Kacheln werden begrenzt offline gespeichert. Ohne passende Daten bleibt das Limit unbekannt.
+- GPS, Adapter und Warnverhalten muessen am Fahrzeug getestet werden; die CI prueft Logik und Builds.
+
+## Schwarzes W204-Modell
+
+[Modell als ZIP herunterladen](models/w204-black.zip) · [Import und Quellenangabe](models/README.md)
+
 ## Fehlerprotokoll
 
 Auf dem Gerät unter `Android/data/de.jarvis.volta/files/volta_log.txt` (vorheriger Start: `volta_log_alt.txt`).

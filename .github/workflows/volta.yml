@@ -204,7 +204,8 @@ jobs:
         with: { gradle-version: "8.9" }
       - name: Bauen
         run: |
-          gradle -p core assembleRelease --console=plain 2>&1 | tee core_build.log | grep -E "^e: |error:|FAILED|BUILD" || true
+          set -o pipefail
+          gradle -p core testReleaseUnitTest assembleRelease --console=plain 2>&1 | tee core_build.log
           ls core/build/outputs/aar/
           AAR=$(ls core/build/outputs/aar/*release*.aar | head -n 1)
           test -f "$AAR"

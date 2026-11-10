@@ -51,6 +51,7 @@ target_sources(VoltaOS PRIVATE
     ${VOLTA_PORT_DIR}/volta_port.cpp
     ${VOLTA_PORT_DIR}/android_apps.cpp
     ${VOLTA_PORT_DIR}/android_car.cpp
+    ${VOLTA_PORT_DIR}/android_limits.cpp
     ${VOLTA_PORT_DIR}/volta_mapproxy.cpp
     ${VOLTA_PORT_DIR}/shim/volta_webshim.h)
 target_include_directories(VoltaOS BEFORE PRIVATE
@@ -214,7 +215,7 @@ patch("qml/CarPanel.qml", [
      r'\1seatbeltOn:  false\n'
      r'\1Connections {\n'
      r'\1    target: Gps\n'
-     r'\1    function onUpdated(d) { var k = (d.speed || 0) * 3.6; speedCluster.portKmh = k < 2 ? 0 : k; portSpeedStale.restart() }\n'
+     r'\1    function onUpdated(d) { var fresh = d.speedValid !== false && (d.ageMs || 0) < 3000; var k = fresh ? (d.speed || 0) * 3.6 : 0; speedCluster.portKmh = k < 2 ? 0 : k; if (fresh) portSpeedStale.restart(); else portSpeedStale.stop() }\n'
      r'\1}\n'
      r'\1Timer { id: portSpeedStale; interval: 3000; onTriggered: speedCluster.portKmh = 0 }\n'
      r'\1Column {\n'
@@ -494,6 +495,73 @@ patch("qml/CarScene.qml", [
     (r'^        visible: root\.userCarActive && !root\.replacing && !root\.fsdMode && !CarModels\.configured$',
      '        onFailed: { root._carErr = userCarMain.loadError; root.replacing = true }\n'
      '        visible: root.userCarActive && !root.replacing && !root.fsdMode && !CarModels.configured', 1),
+])
+
+# ── Stufe 2: OSM-Daten in Voltas vorhandenem Schild und vorhandenen Karten ────
+patch("qml/CarPanel.qml", [
+    (r'visible: reduced && Nav\.navigating && Nav\.speedLimit > 0',
+     'visible: VoltaLimits.limit > 0', 1),
+    (r'text: Nav\.speedLimit > 0 \? String\(Nav\.speedLimit\) : ""\n(\s*)color: "#111111"',
+     r'text: VoltaLimits.limit > 0 ? String(VoltaLimits.limit) : ""\n\1color: VoltaLimits.overspeed ? "#D3232B" : "#111111"', 1),
+])
+patch("qml/Main.qml", [
+    (r'    Connections \{ target: Gps; function onUpdated\(d\) \{ root\._gpsLastFix = Date\.now\(\); root\.gpsFresh = true \} \}',
+'''    Connections {
+        target: Gps
+        function onUpdated(d) {
+            root._gpsLastFix = Date.now() - (d.ageMs || 0)
+            root.gpsFresh = d.fix !== false && (Date.now() - root._gpsLastFix) < 3000
+            VoltaLimits.updatePosition(d)
+        }
+    }
+    Connections {
+        target: Nav
+        Component.onCompleted: VoltaLimits.setNavigationLimit(Nav.navigating && !Nav.rerouting ? Nav.speedLimit : -1)
+        function onProgressChanged() { VoltaLimits.setNavigationLimit(Nav.navigating && !Nav.rerouting ? Nav.speedLimit : -1) }
+        function onNavigatingChanged() { VoltaLimits.setNavigationLimit(Nav.navigating && !Nav.rerouting ? Nav.speedLimit : -1) }
+        function onReroutingChanged() { VoltaLimits.setNavigationLimit(Nav.navigating && !Nav.rerouting ? Nav.speedLimit : -1) }
+    }
+    Connections {
+        target: VoltaLimits
+        function onWarningTriggered(value) {
+            notifStack.notify({ id: "vehicle-speed", iconType: "info", iconColor: "#D3232B",
+                title: qsTr("Speed limit exceeded"), subtitle: qsTr("Speed limit: %1 km/h").arg(value),
+                autoDismissMs: 6000 })
+        }
+        function onChanged() { if (!VoltaLimits.overspeed) notifStack.dismiss("vehicle-speed") }
+    }''', 1),
+])
+patch("qml/Settings.qml", [
+    (r'^([ \t]*)SectionTitle \{ title: qsTr\("OBD adapter"\) \}',
+     r'''\1SectionTitle { title: qsTr("Speed limits") }
+\1Item {
+\1    width: parent.width; height: 42
+\1    Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: qsTr("OpenStreetMap speed limits"); color: root.txt; font.pixelSize: 15 }
+\1    TToggle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; checked: VoltaLimits.enabled; onToggled: on => VoltaLimits.setEnabled(on) }
+\1}
+\1Item {
+\1    width: parent.width; height: 42
+\1    Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: qsTr("Visual speed warnings"); color: root.txt; font.pixelSize: 15 }
+\1    TToggle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; checked: VoltaLimits.warningsEnabled; onToggled: on => VoltaLimits.setWarningsEnabled(on) }
+\1}
+\1Text { text: qsTr("Warning threshold above the limit (km/h)"); color: root.txtSub; font.pixelSize: 13 }
+\1TSegmented {
+\1    width: Math.min(parent.width, 420)
+\1    options: ["0", "+3", "+5", "+10", "+15", "+20"]
+\1    current: [0, 3, 5, 10, 15, 20].indexOf(VoltaLimits.tolerance)
+\1    onPicked: idx => VoltaLimits.setTolerance([0, 3, 5, 10, 15, 20][idx])
+\1}
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 13; color: root.txtHint
+\1    text: VoltaLimits.status + (VoltaLimits.source !== "" ? " · " + VoltaLimits.source : "")
+\1          + (VoltaLimits.road !== "" ? " · " + VoltaLimits.road : "")
+\1}
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
+\1    text: qsTr("Position comes from Volta. Warnings are visual only. OSM needs internet or cached roads. Estimated or unclear limits do not trigger warnings.") + "\\n© OpenStreetMap contributors · ODbL"
+\1}
+\1TDivider {}
+\1SectionTitle { title: qsTr("OBD adapter") }''', 1),
 ])
 
 print("port.py: ok")

@@ -37,6 +37,9 @@ class ObdManager(private val context: Context, private val scope: CoroutineScope
 
     private var job: Job? = null
     @Volatile private var elm: Elm327? = null
+    /** Zeitpunkt der letzten erfolgreich gelesenen Geschwindigkeit, nicht irgendeines PIDs. */
+    @Volatile var speedAtMs: Long = 0L
+        private set
 
     /** Der Adapter kann nur eine Anfrage gleichzeitig – Dashboard und Scanner wechseln sich ab. */
     private val lock = Mutex()
@@ -70,6 +73,7 @@ class ObdManager(private val context: Context, private val scope: CoroutineScope
     }
 
     fun stop() {
+        speedAtMs = 0L
         job?.cancel()
         job = null
         elm?.close()
@@ -193,6 +197,7 @@ class ObdManager(private val context: Context, private val scope: CoroutineScope
                         gotAny = true
                         count += got.size
                         _vehicle.update { v -> got.entries.fold(v) { acc, (p, d) -> ObdParser.apply(acc, p, d) } }
+                        if (got.containsKey(Pid.SPEED)) speedAtMs = SystemClock.elapsedRealtime()
                     } else if (multi == null && ++multiFails >= 3) {
                         multi = false   // Steuergerät/Adapter kann es nicht -> einzeln abfragen
                     }
@@ -210,6 +215,7 @@ class ObdManager(private val context: Context, private val scope: CoroutineScope
                     if (d != null) {
                         gotAny = true
                         _vehicle.update { ObdParser.apply(it, pid, d) }
+                        if (pid == Pid.SPEED) speedAtMs = SystemClock.elapsedRealtime()
                     }
                 } catch (t: ElmTimeoutException) {
                     if (++timeouts >= 5) throw IOException("Adapter antwortet nicht mehr")

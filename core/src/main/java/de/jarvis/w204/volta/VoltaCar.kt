@@ -6,6 +6,8 @@ package de.jarvis.w204.volta
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.os.SystemClock
+import de.jarvis.w204.map.SpeedSample
 import de.jarvis.w204.car.ConnState
 import de.jarvis.w204.obd.ObdManager
 import kotlinx.coroutines.CoroutineScope
@@ -32,6 +34,16 @@ object VoltaCar {
         obd?.stop()
     }
 
+    fun isDemo(): Boolean = obd?.status?.value?.state == ConnState.DEMO
+
+    /** Kein Demo-Tempo und kein "CONNECTED" mit laengst veraltetem Speed-PID. */
+    fun speedSample(): SpeedSample? {
+        val m = obd ?: return null
+        if (m.status.value.state != ConnState.CONNECTED) return null
+        val value = m.vehicle.value.speed ?: return null
+        return SpeedSample(value.toDouble(), m.speedAtMs).takeIf { it.fresh(SystemClock.elapsedRealtime()) }
+    }
+
     /** Aktuelle Werte als JSON (fehlende Werte fehlen auch im JSON). */
     @JvmStatic
     fun snapshot(): String {
@@ -43,7 +55,9 @@ object VoltaCar {
         o.put("message", s.message)
         o.put("live", s.live)
         o.put("rate", s.rate)
-        v.speed?.let { o.put("speed", it) }
+        if (s.state == ConnState.DEMO) v.speed?.let { o.put("speed", it) }
+        else speedSample()?.let { o.put("speed", it.kmh) }
+        o.put("demo", s.state == ConnState.DEMO)
         v.rpm?.let { o.put("rpm", it) }
         v.coolant?.let { o.put("coolant", it) }
         v.oilTemp?.let { o.put("oil", it) }
