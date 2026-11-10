@@ -188,8 +188,9 @@ jobs:
       - name: Bauen
         run: |
           gradle -p core assembleRelease --console=plain 2>&1 | tee core_build.log | grep -E "^e: |error:|FAILED|BUILD" || true
-          AAR=core/build/outputs/aar/core-release.aar
-          test -f $AAR
+          ls core/build/outputs/aar/
+          AAR=$(ls core/build/outputs/aar/*release*.aar | head -n 1)
+          test -f "$AAR"
           mkdir -p corelibs && unzip -p $AAR classes.jar > corelibs/volta-core.jar
           unzip -l corelibs/volta-core.jar | grep -q "de/jarvis/w204/volta/VoltaCar.class"
           ls -la corelibs
@@ -203,7 +204,7 @@ jobs:
 
   android:
     needs: [maplibre, core]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs.core.result == 'success' }}
     runs-on: ubuntu-24.04
     env:
       HAS_KS: ${{ secrets.VOLTA_KEYSTORE_B64 != '' }}
