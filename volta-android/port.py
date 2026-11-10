@@ -51,6 +51,7 @@ target_sources(VoltaOS PRIVATE
     ${VOLTA_PORT_DIR}/volta_port.cpp
     ${VOLTA_PORT_DIR}/android_apps.cpp
     ${VOLTA_PORT_DIR}/android_car.cpp
+    ${VOLTA_PORT_DIR}/android_dashcam.cpp
     ${VOLTA_PORT_DIR}/android_limits.cpp
     ${VOLTA_PORT_DIR}/android_tpms.cpp
     ${VOLTA_PORT_DIR}/volta_mapproxy.cpp
