@@ -34,36 +34,51 @@ QString voltaPortLocalFile(const QString &path)
 {
 #ifdef Q_OS_ANDROID
     if (!path.startsWith(QLatin1String("content:"))) return path;
-    // gleiche Auswahl schon kopiert (Volta prueft die Datei erst und laedt sie dann)
+
+    // Android Storage Access Framework: content:// muss ueber ContentResolver gelesen werden.
+    // QFile(path) kann diese URI nicht als normalen Dateisystempfad oeffnen.
     static QString lastUri, lastOut;
-    if (path == lastUri && QFileInfo::exists(lastOut)) return lastOut;
-    QFile in(path);
-    if (!in.open(QIODevice::ReadOnly)) { qWarning().noquote() << "[port] cannot open" << path; return path; }
-    // Inhalt lesen (peek() geht bei Android-Adressen nicht immer); die Endung kommt aus dem Inhalt,
-    // weil content://-Adressen meist keinen Dateinamen haben
-    QByteArray first = in.read(1 << 20);
-    QString ext;
-    if (first.startsWith("glTF")) ext = QStringLiteral("glb");
-    else if (first.trimmed().startsWith("{")) ext = QStringLiteral("gltf");
-    else {
-        ext = QFileInfo(QUrl::fromPercentEncoding(path.toUtf8())).suffix().toLower();
-        if (ext.isEmpty() || ext.size() > 5) ext = QStringLiteral("bin");
+    if (path == lastUri && QFileInfo::exists(lastOut) && QFileInfo(lastOut).size() > 0)
+        return lastOut;
+
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+                      + QStringLiteral("/volta_pick");
+    if (dir.isEmpty() || !QDir().mkpath(dir)) {
+        qWarning() << "[port] cannot create private cache for selected 3D model";
+        return path;
     }
-    const QString dir = QDir::tempPath() + QStringLiteral("/volta_pick");
-    QDir(dir).removeRecursively();
-    QDir().mkpath(dir);
-    const QString out = dir + QStringLiteral("/car.") + ext;
-    QFile to(out);
-    if (!to.open(QIODevice::WriteOnly)) return path;
-    to.write(first);
-    while (!in.atEnd()) {
-        const QByteArray chunk = in.read(1 << 20);
-        if (chunk.isEmpty()) break;
-        to.write(chunk);
+    const QString out = dir + QStringLiteral("/car.glb");
+    QFile::remove(out);
+
+    const QJniObject uri = QJniObject::fromString(path);
+    const QJniObject target = QJniObject::fromString(out);
+    const jboolean copied = QJniObject::callStaticMethod<jboolean>(
+        "de/jarvis/volta/PortJava", "copyContentUri",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Z",
+        QNativeInterface::QAndroidApplication::context().object(),
+        uri.object<jstring>(), target.object<jstring>());
+
+    QJniEnvironment env;
+    if (env.checkAndClearExceptions() || !copied) {
+        qWarning().noquote() << "[port] ContentResolver could not copy selected file:" << path;
+        return path;
     }
-    to.close();
-    qInfo().noquote() << "[port] picked file copied to" << out << to.size() << "bytes";
-    lastUri = path; lastOut = out;
+
+    QFile verify(out);
+    if (!verify.open(QIODevice::ReadOnly)) {
+        qWarning().noquote() << "[port] copied model cannot be opened:" << out;
+        return path;
+    }
+    const QByteArray magic = verify.read(4);
+    verify.close();
+    if (magic != QByteArray("glTF", 4)) {
+        qWarning().noquote() << "[port] selected file is not a binary GLB (missing glTF header):" << out;
+        return path;
+    }
+
+    qInfo().noquote() << "[port] picked GLB copied to" << out << QFileInfo(out).size() << "bytes";
+    lastUri = path;
+    lastOut = out;
     return out;
 #else
     return path;
