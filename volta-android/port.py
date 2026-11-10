@@ -323,7 +323,7 @@ patch("qml/Settings.qml", [
 patch("qml/Settings.qml", [
     (r'"Arcade", qsTr\("System"\)\]', '"Arcade", qsTr("System"), qsTr("Vehicle")]', 1),
     (r'"bluetooth", "apps", "directions_car", "sports_esports", "settings"\]',
-     '"bluetooth", "apps", "directions_car", "sports_esports", "settings", "speed"]', 1),
+     '"bluetooth", "apps", "directions_car", "sports_esports", "settings", "directions_car"]', 1),
     (r'^(\s*)// ══════ PAGINA: SISTEMA ══════\n',
      r'\1// ══════ PAGINA: VEHICLE (Android-Port: OBD, nur lesend) ══════\n'
      r'\1Column {\n'
@@ -397,6 +397,10 @@ patch("qml/Settings.qml", [
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             flickableDirection: Flickable.VerticalFlick
+            interactive: contentHeight > height + 2
+            pressDelay: 100
+            maximumFlickVelocity: 2200
+            flickDeceleration: 1800
 
             // Der Auswahlbalken scrollt zusammen mit den Menueintraegen.
             Rectangle {
@@ -443,7 +447,12 @@ patch("qml/Settings.qml", [
                             font.pixelSize: 15
                             font.weight: index === root.pageIdx ? Font.DemiBold : Font.Normal
                         }
-                        MouseArea { anchors.fill: parent; onClicked: root.pageIdx = index }
+                        // Passive tap recognizer: an actual vertical swipe stays with the Flickable.
+                        // A full-size MouseArea here used to compete with scroll gestures.
+                        TapHandler {
+                            gesturePolicy: TapHandler.DragThreshold
+                            onTapped: root.pageIdx = index
+                        }
                     }
                 }
             }
