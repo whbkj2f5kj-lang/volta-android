@@ -55,7 +55,10 @@ target_sources(VoltaOS PRIVATE
     ${VOLTA_PORT_DIR}/shim/volta_webshim.h)
 target_include_directories(VoltaOS BEFORE PRIVATE
     ${VOLTA_PORT_DIR}/shim ${VOLTA_PORT_DIR}/shim/QtWebEngineQuick)
-target_compile_definitions(VoltaOS PRIVATE VOLTA_PORT_STAMP="${VOLTA_PORT_STAMP}")
+# Der Build-Stempel wird nur hier verwendet. Global wuerde jeder neue Commit
+# den Compiler-Cache fuer ALLE C++-Dateien ungueltig machen.
+set_property(SOURCE ${VOLTA_PORT_DIR}/volta_port.cpp APPEND PROPERTY
+    COMPILE_DEFINITIONS VOLTA_PORT_STAMP="${VOLTA_PORT_STAMP}")
 file(GLOB_RECURSE VOLTA_PORT_STUBS ${VOLTA_PORT_DIR}/qmlstubs/*)
 file(GLOB VOLTA_PORT_QML ${VOLTA_PORT_DIR}/portqml/*.qml)
 qt_add_resources(VoltaOS "volta_port_qml"
@@ -73,14 +76,9 @@ if(ANDROID)
     if(NOT TARGET Qt6::AssimpImporterPlugin)
         message(FATAL_ERROR "Qt AssimpImporterPlugin fehlt: GLB-Import waere auf Android unmoeglich")
     endif()
-    set(_volta_import_plugins "${CMAKE_CURRENT_BINARY_DIR}/volta_import_plugins")
-    add_custom_command(TARGET VoltaOS POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${_volta_import_plugins}/assetimporters"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:Qt6::AssimpImporterPlugin>"
-            "${_volta_import_plugins}/assetimporters/"
-        VERBATIM)
-    set_property(TARGET VoltaOS APPEND PROPERTY QT_ANDROID_EXTRA_PLUGINS "${_volta_import_plugins}")
+    # Als Qt-Plugin anmelden, damit androiddeployqt Bibliothek und Abhaengigkeiten einpackt.
+    target_link_libraries(VoltaOS PRIVATE Qt6::Quick3DAssetImport)
+    qt_import_plugins(VoltaOS INCLUDE Qt6::AssimpImporterPlugin)
     # Qt D-Bus fehlt in Qt fuer Android
     target_sources(VoltaOS PRIVATE ${VOLTA_PORT_DIR}/shim-dbus/volta_dbusshim.h)
     target_include_directories(VoltaOS BEFORE PRIVATE

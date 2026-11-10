@@ -24,6 +24,8 @@ env:
   QT_MODULES: qtquick3d qtshadertools qtquicktimeline qtlocation qtpositioning qtmultimedia qtwebsockets qtvirtualkeyboard qt5compat
   NDK_VERSION: 27.2.12479018
   GH_TOKEN: ${{ github.token }}
+  CCACHE_COMPILERCHECK: content
+  CCACHE_MAXSIZE: 512M
 
 jobs:
   # MapLibre wird einmal je Zielsystem gebaut (dauert lange) und dann aus dem Zwischenspeicher genommen.
@@ -108,8 +110,18 @@ jobs:
     needs: maplibre
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
+      - name: C++ Compiler-Cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-volta-ccache-v1-qt${{ env.QT_VERSION }}-ndk${{ env.NDK_VERSION }}-linux-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-volta-ccache-v1-qt${{ env.QT_VERSION }}-ndk${{ env.NDK_VERSION }}-linux-
       - uses: actions/cache/restore@v4
         with:
           path: mlinstall
@@ -131,17 +143,22 @@ jobs:
       - name: Pakete
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q ninja-build xvfb libgl1-mesa-dev libegl1-mesa-dev libgl1-mesa-dri libxkbcommon-dev libxkbcommon-x11-0 \
+          sudo apt-get install -y -q ninja-build ccache xvfb libgl1-mesa-dev libegl1-mesa-dev libgl1-mesa-dri libxkbcommon-dev libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1 libxcb-image0 libxcb-render-util0 libxcb-xinerama0 \
             libpulse0 libfontconfig1 libdbus-1-3 x11-utils
       - name: Bauen
         run: |
+          ccache --zero-stats
           python3 volta-android/port.py upstream
           B=$RUNNER_TEMP/vbuild
           cmake -S upstream -B $B -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DVOLTA_PORT_DIR=$PWD/volta-android -DVOLTA_PORT_STAMP=${GITHUB_SHA::8} -DVOLTA_MAPLIBRE_DIR=$PWD/mlinstall 2>&1 | tee cmake.log
           cmake --build $B 2>&1 | tee build.log | grep -E "error|Error|FAILED|^\[[0-9]+/[0-9]+\] Linking" || true
           test -x $B/VoltaOS
+      - name: Compiler-Cache Statistik
+        if: always()
+        run: command -v ccache >/dev/null && ccache --show-stats || true
       - name: Bildschirmfotos
         run: |
           B=$RUNNER_TEMP/vbuild
@@ -208,6 +225,8 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       HAS_KS: ${{ secrets.VOLTA_KEYSTORE_B64 != '' }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
     strategy:
       fail-fast: false
       matrix:
@@ -216,6 +235,13 @@ jobs:
           - { qtarch: android_armv7, name: arm32 }
     steps:
       - uses: actions/checkout@v4
+      - name: C++ Compiler-Cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-volta-ccache-v1-qt${{ env.QT_VERSION }}-ndk${{ env.NDK_VERSION }}-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-volta-ccache-v1-qt${{ env.QT_VERSION }}-ndk${{ env.NDK_VERSION }}-${{ matrix.name }}-
       - uses: actions/cache/restore@v4
         with:
           path: mlinstall
@@ -250,7 +276,7 @@ jobs:
           cache: true
       - name: Android-SDK
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q ninja-build
+          sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache
           for i in 1 2 3; do
             yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;$NDK_VERSION" "platforms;android-35" "build-tools;35.0.0" > /dev/null && break || sleep 20
           done
@@ -277,6 +303,7 @@ jobs:
           fi
       - name: Bauen
         run: |
+          ccache --zero-stats
           python3 volta-android/port.py upstream
           # Qts Gradle-Vorlage + Kotlin/Coroutines fuer die Fahrzeug-Technik (core/)
           QTA=$RUNNER_TEMP/Qt/$QT_VERSION/${{ matrix.qtarch }}
@@ -292,6 +319,7 @@ jobs:
           B=$RUNNER_TEMP/vbuild   # ausserhalb des Repos: dort liegt ein fremdes settings.gradle
           chmod -R u+x $QT/*/bin $QT/*/libexec 2>/dev/null || true
           $QT/${{ matrix.qtarch }}/bin/qt-cmake -S upstream -B $B -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DQT_HOST_PATH=$QT/gcc_64 -DANDROID_SDK_ROOT=$ANDROID_SDK_ROOT -DANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION \
             -DVOLTA_PORT_DIR=$PWD/volta-android -DVOLTA_PORT_STAMP=${GITHUB_SHA::8} -DVOLTA_OPENSSL_DIR=$PWD/android_openssl \
             -DVOLTA_MAPLIBRE_DIR=$PWD/mlinstall \
@@ -300,11 +328,16 @@ jobs:
           find $B/android-build -name "*.apk"
           U=$(find $B/android-build -name "*release-unsigned.apk" | head -n 1)
           test -n "$U"
+          unzip -Z1 "$U" > apk-files.txt
+          grep -Eq '^lib/[^/]+/libplugins_assetimporters_assimp_[^/]+\.so$' apk-files.txt || { echo "GLB-Importer fehlt in der APK (Assimp)"; exit 1; }
           unzip -l "$U" | grep -i "maplibre" || { echo "MapLibre fehlt in der APK"; exit 1; }
           unzip -p "$U" 'classes*.dex' | grep -aq "de/jarvis/w204/volta/VoltaCar" || { echo "Fahrzeug-Technik fehlt in der APK"; exit 1; }
           $ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner sign --ks volta.jks --ks-pass pass:voltaport --key-pass pass:voltaport \
             --ks-key-alias volta --out volta-${{ matrix.name }}.apk "$U"
           ls -la volta-${{ matrix.name }}.apk
+      - name: Compiler-Cache Statistik
+        if: always()
+        run: command -v ccache >/dev/null && ccache --show-stats || true
       - name: Veröffentlichen
         if: always()
         run: |
