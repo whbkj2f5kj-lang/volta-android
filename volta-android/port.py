@@ -485,9 +485,3 @@ patch("qml/CarScene.qml", [
 ])
 
 print("port.py: ok")
-,
-     '        onFailed: { root._carErr = userCarMain.loadError; root.replacing = true }\n'
-     '        visible: root.userCarActive && !root.replacing && !root.fsdMode && !CarModels.configured', 1),
-])
-
-print("port.py: ok")
