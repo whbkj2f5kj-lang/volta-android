@@ -440,58 +440,50 @@ patch("qml/Settings.qml", [
 # Der Android-Dateidialog liefert content:// statt eines Dateisystempfads.
 # ContentResolver kopiert die ausgewaehlte GLB-Datei in den privaten Cache.
 patch("qml/UserCar.qml", [
-    (r'^    readonly property bool loaded: loader\.status === RuntimeLoader\.Success\\n',
-     '    readonly property bool loaded: loader.status === RuntimeLoader.Success\\n'
-     '    property string loadError: ""\\n', 1),
-    (r'^    onFileChanged: \\{ setupDone = false; rigged = false; _bnd = null \\}.*
-,
-     '    onFileChanged: {\\n'
-     '        setupDone = false; rigged = false; _bnd = null; loadError = ""\\n'
-     '        if (file !== "") { console.info("[3D car] loading:", file); loadTimeout.restart() }\\n'
-     '        else loadTimeout.stop()\\n'
+    (r'^    readonly property bool loaded: loader\.status === RuntimeLoader\.Success$',
+     '    readonly property bool loaded: loader.status === RuntimeLoader.Success\n'
+     '    property string loadError: ""\n', 1),
+    (r'^    onFileChanged: \{ setupDone = false; rigged = false; _bnd = null \}.*$',
+     '    onFileChanged: {\n'
+     '        setupDone = false; rigged = false; _bnd = null; loadError = ""\n'
+     '        if (file !== "") { console.info("[3D car] loading:", file); loadTimeout.restart() }\n'
+     '        else loadTimeout.stop()\n'
      '    }', 1),
-    (r'if \\(status === RuntimeLoader\\.Success\\) setupTimer\\.restart\\(\\)\\n'
-     r'                else if \\(status === RuntimeLoader\\.Error\\) console\\.log\\("\\[3D car\\] error:", errorString\\)',
-     'if (status === RuntimeLoader.Success) {\\n'
-     '                    loadTimeout.stop(); console.info("[3D car] RuntimeLoader success"); setupTimer.restart()\\n'
-     '                } else if (status === RuntimeLoader.Error) {\\n'
-     '                    loadTimeout.stop(); rig.loadError = errorString || qsTr("The 3D model could not be loaded.");\\n'
-     '                    console.warn("[3D car] RuntimeLoader error:", errorString)\\n'
-     '                }', 1),
-    (r'^    Timer \\{ id: setupTimer; interval: 30; onTriggered: rig\\._setup\\(\\) \\}
-,
-     '    Timer { id: setupTimer; interval: 30; onTriggered: rig._setup() }\\n'
-     '    Timer {\\n'
-     '        id: loadTimeout; interval: 60000; repeat: false\\n'
-     '        onTriggered: if (!rig.loaded && rig.file !== "") {\\n'
-     '            rig.loadError = qsTr("Loading timed out after 60 seconds. The GLB may be unsupported or too large.")\\n'
-     '            console.warn("[3D car] RuntimeLoader timeout; status:", loader.status)\\n'
-     '        }\\n'
+    (r'if \(status === RuntimeLoader\.Success\) setupTimer\.restart\(\)',
+     'if (status === RuntimeLoader.Success) { loadTimeout.stop(); console.info("[3D car] RuntimeLoader success"); setupTimer.restart() }', 1),
+    (r'else if \(status === RuntimeLoader\.Error\) console\.log\("\[3D car\] error:", errorString\)',
+     'else if (status === RuntimeLoader.Error) { loadTimeout.stop(); rig.loadError = errorString || qsTr("The 3D model could not be loaded."); console.warn("[3D car] RuntimeLoader error:", errorString) }', 1),
+    (r'^    Timer \{ id: setupTimer; interval: 30; onTriggered: rig\._setup\(\) \}$',
+     '    Timer { id: setupTimer; interval: 30; onTriggered: rig._setup() }\n'
+     '    Timer {\n'
+     '        id: loadTimeout; interval: 60000; repeat: false\n'
+     '        onTriggered: if (!rig.loaded && rig.file !== "") {\n'
+     '            rig.loadError = qsTr("Loading timed out after 60 seconds. The GLB may be unsupported or too large.")\n'
+     '            console.warn("[3D car] RuntimeLoader timeout; status:", loader.status)\n'
+     '        }\n'
      '    }', 1),
 ])
 patch("qml/CarSetup.qml", [
-    (r'^    signal finished\\(\\)\\n',
-     '    signal finished()\\n    signal failed()\\n', 1),
-    (r'^    readonly property bool ready: rig && rig\\.loaded && rig\\.setupDone\\n',
-     '    readonly property bool ready: rig && rig.loaded && rig.setupDone\\n'
-     '    readonly property string loadError: rig ? rig.loadError : ""\\n', 1),
-    (r'text: qsTr\\("Loading the car…")',
+    (r'^    signal finished\(\)$', '    signal finished()\n    signal failed()', 1),
+    (r'^    readonly property bool ready: rig && rig\.loaded && rig\.setupDone$',
+     '    readonly property bool ready: rig && rig.loaded && rig.setupDone\n'
+     '    readonly property string loadError: rig ? rig.loadError : ""', 1),
+    (r'text: qsTr\("Loading the car…"\)',
      'text: setup.loadError !== "" ? setup.loadError : qsTr("Loading the car…")', 1),
-    (r'color: setup\\.fg; font\\.pixelSize: 18',
+    (r'color: setup\.fg; font\.pixelSize: 18',
      'color: setup.loadError !== "" ? "#FF6B6B" : setup.fg; font.pixelSize: 18', 1),
-    (r'font\\.pixelSize: 18\\n            \\}',
-     'font.pixelSize: 18\\n            }\\n'
-     '            BtnBlue {\\n'
-     '                visible: setup.loadError !== ""\\n'
-     '                width: parent.width; label: qsTr("Choose another model")\\n'
-     '                onClicked: setup.failed()\\n'
-     '            }', 1),
+    (r'^            // ── domanda iniziale ──$',
+     '            BtnBlue {\n'
+     '                visible: setup.loadError !== ""\n'
+     '                width: parent.width; label: qsTr("Choose another model")\n'
+     '                onClicked: setup.failed()\n'
+     '            }\n\n'
+     '            // ── domanda iniziale ──', 1),
 ])
 patch("qml/CarScene.qml", [
-    (r'lightTheme: root\\.lightTheme\\n        visible: root\\.userCarActive && !root\\.replacing && !root\\.fsdMode && !CarModels\\.configured',
-     'lightTheme: root.lightTheme\\n'
-     '        onFailed: { root._carErr = userCarMain.loadError; root.replacing = true }\\n'
-     '        visible: root.userCarActive && !root.replacing && !root.fsdMode && !CarModels.configured', 1),
+    (r'^        lightTheme: root\.lightTheme$',
+     '        lightTheme: root.lightTheme\n'
+     '        onFailed: { root._carErr = userCarMain.loadError; root.replacing = true }', 1),
 ])
 
 print("port.py: ok")
