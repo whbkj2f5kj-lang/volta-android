@@ -14,6 +14,7 @@
 #include <QTimer>
 #ifdef Q_OS_ANDROID
 #include <QScreen>
+#include <QJniEnvironment>
 #include <QSysInfo>
 #include <QDateTime>
 #include <QJniObject>
