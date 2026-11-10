@@ -67,6 +67,20 @@ qt_add_resources(VoltaOS "volta_port_stubs"
     BASE ${VOLTA_PORT_DIR}/qmlstubs
     FILES ${VOLTA_PORT_STUBS})
 if(ANDROID)
+    # RuntimeLoader findet Assimp dynamisch; der QML-Imports scanner nimmt es nicht automatisch mit.
+    # Ohne dieses Plugin liefert Qt exakt "Unsupported: Unknown error" fuer jede GLB-Datei.
+    find_package(Qt6 REQUIRED COMPONENTS Quick3DAssetImport)
+    if(NOT TARGET Qt6::AssimpImporterPlugin)
+        message(FATAL_ERROR "Qt AssimpImporterPlugin fehlt: GLB-Import waere auf Android unmoeglich")
+    endif()
+    set(_volta_import_plugins "${CMAKE_CURRENT_BINARY_DIR}/volta_import_plugins")
+    add_custom_command(TARGET VoltaOS POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_volta_import_plugins}/assetimporters"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:Qt6::AssimpImporterPlugin>"
+            "${_volta_import_plugins}/assetimporters/"
+        VERBATIM)
+    set_property(TARGET VoltaOS APPEND PROPERTY QT_ANDROID_EXTRA_PLUGINS "${_volta_import_plugins}")
     # Qt D-Bus fehlt in Qt fuer Android
     target_sources(VoltaOS PRIVATE ${VOLTA_PORT_DIR}/shim-dbus/volta_dbusshim.h)
     target_include_directories(VoltaOS BEFORE PRIVATE
