@@ -470,8 +470,6 @@ patch("qml/CarSetup.qml", [
      '    readonly property string loadError: rig ? rig.loadError : ""', 1),
     (r'text: qsTr\("Loading the car…"\)',
      'text: setup.loadError !== "" ? setup.loadError : qsTr("Loading the car…")', 1),
-    (r'color: setup\.fg; font\.pixelSize: 18',
-     'color: setup.loadError !== "" ? "#FF6B6B" : setup.fg; font.pixelSize: 18', 1),
     (r'^            // ── domanda iniziale ──$',
      '            BtnBlue {\n'
      '                visible: setup.loadError !== ""\n'
