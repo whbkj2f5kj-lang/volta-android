@@ -505,6 +505,16 @@ patch("qml/CarSetup.qml", [
      '                onClicked: setup.failed()\n'
      '            }\n\n'
      '            // ── domanda iniziale ──', 1),
+    # Teile-Auswahl (Tueren, Haube, Kofferraum, Raeder): Volta aenderte nur result[kind].
+    # Das meldet QML nicht als Aenderung, curList/found blieben auf dem alten Stand und
+    # die Vorschau zeigte weiter die alte (automatische) Auswahl. Jetzt wird result neu gesetzt.
+    (r'^    function _names\(v\) \{',
+     '    function _setResult(k, v) { var r = Object.assign({}, result); r[k] = v; result = r }\n'
+     '    function _names(v) {', 1),
+    (r'^        if \(materialsMode\) result\[kind\] = sel\.slice\(\)$',
+     '        if (materialsMode) _setResult(kind, sel.slice())', 1),
+    (r'^            result\[kind\] = nm$', '            _setResult(kind, nm)', 1),
+    (r'^        result\[kind\] = \[\]$', '        _setResult(kind, [])', 1),
 ])
 patch("qml/CarScene.qml", [
     (r'^        visible: root\.userCarActive && !root\.replacing && !root\.fsdMode && !CarModels\.configured$',
