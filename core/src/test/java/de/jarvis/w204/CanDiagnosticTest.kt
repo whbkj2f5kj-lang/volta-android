@@ -59,7 +59,7 @@ class CanDiagnosticTest {
         val elm = SafeElm { cmd, _ ->
             commands += cmd
             if (cmd.startsWith("AT")) "OK"
-            else "7E8 03 62 F1 97\\r482 03 62 F1 97"
+            else "7E8 03 62 F1 97\r482 03 62 F1 97"
         }
         val eis = MercedesDiagnostics.documentedRoutes.single { it.tx == 0x612 }
         elm.targetRoute(eis)
