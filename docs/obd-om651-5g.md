@@ -78,3 +78,29 @@ bewährtes Mercedes-Diagnosesystem ermitteln. Dann für **einen** Messwert die
 tatsächliche TX/RX-Paarung, vollständige Antwort-PDU, Kodierung und plausible
 Referenzwerte dokumentieren. Erst danach den Wert für die Live-Anzeige freigeben.
 Keine weiteren pauschalen PID- oder CAN-Bereichsscans.
+
+
+## Volta Vehicle: gezielter Mercedes-Test
+
+Unter **Settings → Vehicle → Mercedes diagnostic check · 5G-Tronic** steht ein
+manuell auslösbarer, schreibgeschützter Test mit **Save report** zur Verfügung.
+Die Diagnose läuft asynchron im Android-Kotlin-Core über den bereits bestehenden,
+exklusiven OBD-Adapterzugriff. Nach dem Test werden die Ergebnisse im Vehicle-Menü
+angezeigt und können unter `Downloads/W204/W204-Mercedes-*.txt` exportiert werden
+(Android 10+; ältere Android-Versionen nutzen den App-Dateiordner).
+
+Der Test sendet **nur diese beiden** quellengeprüften Leseabfragen:
+
+1. `7E1 → 7E9`, KWP `21 30`: 722.6/EGS-Getriebeöltemperatur-Kandidat.
+   Positive Antworten werden als roher `61 30 ...`-Nachweis abgelegt,
+   **nicht** als Grad Celsius angezeigt, weil Bytes/Skalierung am W204 fehlen.
+2. `7E0 → 7E8`, UDS `22 2007`: Delphi-CRD3-Batteriespannungs-Kandidat;
+   nur bei exakt gültigem `62 20 07 XX YY`-Format als **unbestätigter
+   Kandidat** berechnet.
+
+Damit sind die vorhandenen Mercedes-Routen technisch nutzbar, ohne den
+Produktivscanner durch einen pauschalen DID-Sweep zu ersetzen. Der Test
+berücksichtigt den tatsächlichen CAN-Antwortabsender; `NO DATA`,
+Negativantworten, abgelehnte Filter und Adapter-Fehler werden unverfälscht
+im Report dokumentiert. **DPF-Rußbeladung wird nicht angefragt**, weil
+dafür weiterhin keine belegte herstellerspezifische Kennung vorliegt.
