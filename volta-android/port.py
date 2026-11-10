@@ -481,9 +481,13 @@ patch("qml/CarSetup.qml", [
      '            // ── domanda iniziale ──', 1),
 ])
 patch("qml/CarScene.qml", [
-    (r'^        lightTheme: root\.lightTheme$',
-     '        lightTheme: root.lightTheme\n'
-     '        onFailed: { root._carErr = userCarMain.loadError; root.replacing = true }', 1),
+    (r'^        visible: root\.userCarActive && !root\.replacing && !root\.fsdMode && !CarModels\.configured
+])
+
+print("port.py: ok")
+,
+     '        onFailed: { root._carErr = userCarMain.loadError; root.replacing = true }\n'
+     '        visible: root.userCarActive && !root.replacing && !root.fsdMode && !CarModels.configured', 1),
 ])
 
 print("port.py: ok")
