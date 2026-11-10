@@ -124,7 +124,7 @@ if(ANDROID)
         QT_ANDROID_VERSION_CODE "${VOLTA_PORT_CODE}"
         # wie beim Dashboard: als aeltere App gilt Volta auf Android 10 nicht fuer die neuen Sperren
         # (WLAN/Bluetooth ein-/ausschalten, alte Netz-Schnittstellen)
-        QT_ANDROID_TARGET_SDK_VERSION 28)
+        QT_ANDROID_TARGET_SDK_VERSION 27)
     if(VOLTA_OPENSSL_DIR)
         include(${VOLTA_OPENSSL_DIR}/android_openssl.cmake)
         add_android_openssl_libraries(VoltaOS)
