@@ -1,0 +1,27 @@
+name: Volta core PR tests
+
+on:
+  pull_request:
+    paths:
+      - 'core/**'
+      - 'docs/obd-om651-5g.md'
+      - '.github/workflows/core-pr-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-unit-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Run Android library unit tests
+        run: gradle -p core testReleaseUnitTest assembleRelease --console=plain
