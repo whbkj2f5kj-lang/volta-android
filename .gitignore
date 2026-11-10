@@ -1,0 +1,4 @@
+core/build/
+core/.gradle/
+volta-android/android/libs/
+volta-android/android/build.gradle

@@ -50,6 +50,7 @@ endif()
 target_sources(VoltaOS PRIVATE
     ${VOLTA_PORT_DIR}/volta_port.cpp
     ${VOLTA_PORT_DIR}/android_apps.cpp
+    ${VOLTA_PORT_DIR}/android_car.cpp
     ${VOLTA_PORT_DIR}/volta_mapproxy.cpp
     ${VOLTA_PORT_DIR}/shim/volta_webshim.h)
 target_include_directories(VoltaOS BEFORE PRIVATE
@@ -191,9 +192,11 @@ patch("qml/Settings.qml", [
 
 # ── Tacho-Bereich: Tempo vom GPS; Anzeigen ohne echte Daten (Gang, Licht, Gurt, Airbag) ausblenden ──
 patch("qml/CarPanel.qml", [
+    (r'^import QtQuick3D\n', 'import QtQuick3D\nimport VoltaPort 1.0\n', 1),
     (r'^(\s*)gear:       "P"\n\s*speedValue: "0"\n\s*speedUnit:  "km/h"\n\s*headlightOn: true\n\s*seatbeltOn:  true\n',
      r'\1property real portKmh: 0\n'
-     r'\1speedValue: Math.round(portKmh).toString()\n'
+     r'\1readonly property real portShownKmh: VoltaCar.live && VoltaCar.speed >= 0 ? VoltaCar.speed : portKmh\n'
+     r'\1speedValue: Math.round(portShownKmh).toString()\n'
      r'\1speedUnit:  "km/h"\n'
      r'\1headlightOn: false\n'
      r'\1seatbeltOn:  false\n'
@@ -201,9 +204,36 @@ patch("qml/CarPanel.qml", [
      r'\1    target: Gps\n'
      r'\1    function onUpdated(d) { var k = (d.speed || 0) * 3.6; speedCluster.portKmh = k < 2 ? 0 : k; portSpeedStale.restart() }\n'
      r'\1}\n'
-     r'\1Timer { id: portSpeedStale; interval: 3000; onTriggered: speedCluster.portKmh = 0 }\n', 1),
+     r'\1Timer { id: portSpeedStale; interval: 3000; onTriggered: speedCluster.portKmh = 0 }\n'
+     r'\1Column {\n'
+     r'\1    visible: VoltaCar.live\n'
+     r'\1    x: carPanel.rhd ? speedCluster.width - width : 0\n'
+     r'\1    y: speedCluster.implicitHeight + 6\n'
+     r'\1    spacing: 10\n'
+     r'\1    Repeater {\n'
+     r'\1        // feste Liste (nicht bei jedem Wert neu aufbauen); fehlende Werte blenden sich aus\n'
+     r'\1        model: ["rpm", "coolant", "oil", "boost", "voltage", "consumption"]\n'
+     r'\1        Column {\n'
+     r'\1            readonly property real val: VoltaCar[modelData]\n'
+     r'\1            readonly property bool warn: (modelData === "rpm" && val > 4200) || (modelData === "coolant" && val >= 108)\n'
+     r'\1                                         || (modelData === "oil" && val >= 125) || (modelData === "voltage" && val >= 0 && val < 11.8)\n'
+     r'\1            readonly property bool cold: (modelData === "coolant" || modelData === "oil") && val >= 0 && val < 60\n'
+     r'\1            visible: val >= 0\n'
+     r'\1            spacing: -1\n'
+     r'\1            Text {\n'
+     r'\1                text: Number(parent.val).toFixed(modelData === "boost" || modelData === "voltage" || modelData === "consumption" ? 1 : 0)\n'
+     r'\1                color: parent.warn ? "#ED4E3B" : parent.cold ? "#A8C3F4" : (carPanel._lt ? "#171717" : "#F0F0F0")\n'
+     r'\1                font.pixelSize: 26; font.weight: Font.Light\n'
+     r'\1            }\n'
+     r'\1            Text {\n'
+     r'\1                text: ({ rpm: "RPM", coolant: "COOLANT °C", oil: "OIL °C", boost: "BOOST BAR", voltage: "BATTERY V", consumption: "L/100 KM" })[modelData]\n'
+     r'\1                color: "#757575"; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 1\n'
+     r'\1            }\n'
+     r'\1        }\n'
+     r'\1    }\n'
+     r'\1}\n', 1),
     (r'fillPct: 0 // To be connected to the real GPS if you want',
-     'fillPct: Math.min(100, speedCluster.portKmh / 2)   // Android-Port: GPS-Tempo, voll bei 200 km/h', 1),
+     'fillPct: Math.min(100, speedCluster.portShownKmh / 2)   // Android-Port: Tempo (OBD, sonst GPS), voll bei 200 km/h', 1),
 ])
 patch("qml/SpeedCluster.qml", [
     (r'^(\s*)Row \{\n(\s*)x: cluster\.rhd \? col\.width - width : 0\n(\s*)spacing: 7\n',
@@ -269,5 +299,65 @@ patch("qml/Settings.qml", [
      r'\4    text: qsTr("Music widget: allow Volta to see what other apps are playing") + "  ›"\n'
      r'\4    color: root.blue; font.pixelSize: 13; wrapMode: Text.WordWrap\n'
      r'\4    MouseArea { anchors.fill: parent; anchors.margins: -8; onClicked: AndroidPort.openMediaAccess() }\n\4}', 1),
+])
+
+# ── Einstellungen > Vehicle: OBD-Adapter und Status (Technik aus dem Dashboard W204) ──
+patch("qml/Settings.qml", [
+    (r'"Arcade", qsTr\("System"\)\]', '"Arcade", qsTr("System"), qsTr("Vehicle")]', 1),
+    (r'"bluetooth", "apps", "directions_car", "sports_esports", "settings"\]',
+     '"bluetooth", "apps", "directions_car", "sports_esports", "settings", "speed"]', 1),
+    (r'^(\s*)// ══════ PAGINA: SISTEMA ══════\n',
+     r'\1// ══════ PAGINA: VEHICLE (Android-Port: OBD, nur lesend) ══════\n'
+     r'\1Column {\n'
+     r'\1    visible: root.pageIdx === root.pages.indexOf(qsTr("Vehicle"))\n'
+     r'\1    width: parent.width; spacing: 14\n'
+     r'\1    SectionTitle { title: qsTr("Vehicle") }\n'
+     r'\1    Text {\n'
+     r'\1        width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 15\n'
+     r'\1        color: VoltaCar.live ? root.txt : root.txtHint\n'
+     r'\1        text: VoltaCar.live ? (qsTr("Connected") + (VoltaCar.demo ? qsTr(" (demo values)") : "") + (VoltaCar.rate > 0 ? "  ·  " + VoltaCar.rate.toFixed(1) + qsTr(" values/s") : ""))\n'
+     r'\1                            : (VoltaCar.message !== "" ? VoltaCar.message : qsTr("Not connected"))\n'
+     r'\1    }\n'
+     r'\1    Text {\n'
+     r'\1        width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint\n'
+     r'\1        text: qsTr("Volta only reads values from the car (OBD). Nothing is written, cleared or coded.")\n'
+     r'\1    }\n'
+     r'\1    SectionTitle { title: qsTr("OBD adapter") }\n'
+     r'\1    Text {\n'
+     r'\1        visible: VoltaCar.adapters.length === 0\n'
+     r'\1        width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 13; color: root.txtHint\n'
+     r'\1        text: qsTr("No paired Bluetooth devices. Pair the OBD adapter in Bluetooth first (PIN usually 1234 or 0000).")\n'
+     r'\1    }\n'
+     r'\1    Column {\n'
+     r'\1        width: parent.width; spacing: 0\n'
+     r'\1        Repeater {\n'
+     r'\1            model: VoltaCar.adapters\n'
+     r'\1            Rectangle {\n'
+     r'\1                width: parent.width; height: 56; color: "transparent"\n'
+     r'\1                readonly property bool sel: !VoltaCar.demo && VoltaCar.adapterAddress === modelData.address\n'
+     r'\1                Text {\n'
+     r'\1                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; anchors.verticalCenterOffset: -8\n'
+     r'\1                    text: modelData.name; color: parent.sel ? root.blue : root.txt; font.pixelSize: 15\n'
+     r'\1                }\n'
+     r'\1                Text {\n'
+     r'\1                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; anchors.verticalCenterOffset: 11\n'
+     r'\1                    text: modelData.address + (modelData.obd ? qsTr("  ·  probably OBD") : ""); color: root.txtHint; font.pixelSize: 12\n'
+     r'\1                }\n'
+     r'\1                Text {\n'
+     r'\1                    anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter\n'
+     r'\1                    text: parent.sel ? "✓" : ""; color: root.blue; font.pixelSize: 18; font.weight: Font.Bold\n'
+     r'\1                }\n'
+     r'\1                MouseArea { anchors.fill: parent; onClicked: VoltaCar.setAdapter(modelData.address, modelData.name) }\n'
+     r'\1                TDivider { anchors.bottom: parent.bottom }\n'
+     r'\1            }\n'
+     r'\1        }\n'
+     r'\1    }\n'
+     r'\1    Row {\n'
+     r'\1        spacing: 12\n'
+     r'\1        TSecondary { label: qsTr("Refresh list"); onClicked: VoltaCar.refreshAdapters() }\n'
+     r'\1        TSecondary { label: VoltaCar.demo ? qsTr("Stop demo") : qsTr("Demo values"); onClicked: VoltaCar.setDemo(!VoltaCar.demo) }\n'
+     r'\1    }\n'
+     r'\1}\n\n'
+     r'\1// ══════ PAGINA: SISTEMA ══════\n', 1),
 ])
 print("port.py: ok")

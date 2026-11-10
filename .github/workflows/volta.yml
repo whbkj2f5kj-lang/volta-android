@@ -176,8 +176,33 @@ jobs:
           for f in out/*; do mv "$f" "out/linux_$(basename $f)"; done
           gh release upload volta out/* --clobber
 
+  # Fahrzeug-Technik aus dem Dashboard W204 (core/, Kotlin): als .jar fuer die Volta-APK
+  core:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.9" }
+      - name: Bauen
+        run: |
+          gradle -p core assembleRelease --console=plain 2>&1 | tee core_build.log | grep -E "^e: |error:|FAILED|BUILD" || true
+          AAR=core/build/outputs/aar/core-release.aar
+          test -f $AAR
+          mkdir -p corelibs && unzip -p $AAR classes.jar > corelibs/volta-core.jar
+          unzip -l corelibs/volta-core.jar | grep -q "de/jarvis/w204/volta/VoltaCar.class"
+          ls -la corelibs
+      - uses: actions/upload-artifact@v4
+        with: { name: corelibs, path: corelibs/ }
+      - name: Protokoll bei Fehler
+        if: failure()
+        run: |
+          mkdir -p out && cp core_build.log out/core_build.log 2>/dev/null || true
+          gh release upload volta out/* --clobber || true
+
   android:
-    needs: maplibre
+    needs: [maplibre, core]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     env:
@@ -200,6 +225,8 @@ jobs:
           git init -q upstream && cd upstream
           git fetch -q --depth 1 "$VOLTA_REPO" "$VOLTA_COMMIT" && git checkout -q FETCH_HEAD
           cd .. && git clone -q --depth 1 https://github.com/KDAB/android_openssl.git
+      - uses: actions/download-artifact@v4
+        with: { name: corelibs, path: volta-android/android/libs }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
       - uses: jurplel/install-qt-action@v4
@@ -250,6 +277,11 @@ jobs:
       - name: Bauen
         run: |
           python3 volta-android/port.py upstream
+          # Qts Gradle-Vorlage + Kotlin/Coroutines fuer die Fahrzeug-Technik (core/)
+          QTA=$RUNNER_TEMP/Qt/$QT_VERSION/${{ matrix.qtarch }}
+          cp $QTA/src/android/templates/build.gradle volta-android/android/build.gradle
+          grep -n "fileTree" volta-android/android/build.gradle
+          printf '\ndependencies {\n    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.0.20"\n    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"\n}\n' >> volta-android/android/build.gradle
           A=volta-android/android/assets/volta
           mkdir -p $A/assets
           cp -r upstream/services $A/
@@ -268,6 +300,7 @@ jobs:
           U=$(find $B/android-build -name "*release-unsigned.apk" | head -n 1)
           test -n "$U"
           unzip -l "$U" | grep -i "maplibre" || { echo "MapLibre fehlt in der APK"; exit 1; }
+          unzip -p "$U" 'classes*.dex' | grep -aq "de/jarvis/w204/volta/VoltaCar" || { echo "Fahrzeug-Technik fehlt in der APK"; exit 1; }
           $ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner sign --ks volta.jks --ks-pass pass:voltaport --key-pass pass:voltaport \
             --ks-key-alias volta --out volta-${{ matrix.name }}.apk "$U"
           ls -la volta-${{ matrix.name }}.apk
