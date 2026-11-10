@@ -49,12 +49,18 @@ if(NOT VOLTA_PORT_STAMP)
 endif()
 target_sources(VoltaOS PRIVATE
     ${VOLTA_PORT_DIR}/volta_port.cpp
+    ${VOLTA_PORT_DIR}/android_apps.cpp
     ${VOLTA_PORT_DIR}/volta_mapproxy.cpp
     ${VOLTA_PORT_DIR}/shim/volta_webshim.h)
 target_include_directories(VoltaOS BEFORE PRIVATE
     ${VOLTA_PORT_DIR}/shim ${VOLTA_PORT_DIR}/shim/QtWebEngineQuick)
 target_compile_definitions(VoltaOS PRIVATE VOLTA_PORT_STAMP="${VOLTA_PORT_STAMP}")
 file(GLOB_RECURSE VOLTA_PORT_STUBS ${VOLTA_PORT_DIR}/qmlstubs/*)
+file(GLOB VOLTA_PORT_QML ${VOLTA_PORT_DIR}/portqml/*.qml)
+qt_add_resources(VoltaOS "volta_port_qml"
+    PREFIX "/volta_port"
+    BASE ${VOLTA_PORT_DIR}/portqml
+    FILES ${VOLTA_PORT_QML})
 qt_add_resources(VoltaOS "volta_port_stubs"
     PREFIX "/qt/qml"
     BASE ${VOLTA_PORT_DIR}/qmlstubs
@@ -94,7 +100,10 @@ if(ANDROID)
         QT_ANDROID_PACKAGE_SOURCE_DIR ${VOLTA_PORT_DIR}/android
         QT_ANDROID_PACKAGE_NAME "de.jarvis.volta"
         QT_ANDROID_VERSION_NAME "${VOLTA_PORT_VERSION}"
-        QT_ANDROID_VERSION_CODE "${VOLTA_PORT_CODE}")
+        QT_ANDROID_VERSION_CODE "${VOLTA_PORT_CODE}"
+        # wie beim Dashboard: als aeltere App gilt Volta auf Android 10 nicht fuer die neuen Sperren
+        # (WLAN/Bluetooth ein-/ausschalten, alte Netz-Schnittstellen)
+        QT_ANDROID_TARGET_SDK_VERSION 28)
     if(VOLTA_OPENSSL_DIR)
         include(${VOLTA_OPENSSL_DIR}/android_openssl.cmake)
         add_android_openssl_libraries(VoltaOS)
@@ -114,5 +123,62 @@ patch("src/main.cpp", [
 patch("src/core/CarModelManager.cpp", [
     (r'^#include "CarModelManager.h"\n', '#include "CarModelManager.h"\nQString voltaPortLocalFile(const QString &path);\n', 1),
     (r"QString p = srcPath;", "QString p = voltaPortLocalFile(srcPath);", 2),
+])
+
+# ── Android-Apps in Voltas eigenem App-Drawer und in Einstellungen > Apps ──────
+IMP = (r'^import VoltaApp 1\.0\n', 'import VoltaApp 1.0\nimport VoltaPort 1.0\n', 1)
+
+patch("qml/AppDrawer.qml", [
+    IMP,
+    # Voltas Liste + installierte Android-Apps (gleiches Raster, gleiche Zellen, ziehbar in die Leiste)
+    (r'^    property var qtApps: \[', '    property var _voltaQtApps: [', 1),
+    (r'^    property var androidApps: \[\]\n',
+     '    property var androidApps: []\n    property var qtApps: drawer._voltaQtApps.concat(AndroidPort.apps)\n', 1),
+    # bei vielen Symbolen: Drawer nicht hoeher als der Bildschirm, dann scrollen
+    (r'^    height: contentCol\.height \+ 36 \* f\n',
+     '    readonly property real portFullH: contentCol.height + 36 * f\n'
+     '    readonly property real portMaxH: Window.window ? Window.window.height * 0.74 : 99999\n'
+     '    readonly property bool portScroll: portFullH > portMaxH + 1\n'
+     '    height: Math.min(portFullH, portMaxH)\n', 1),
+    (r'^    Column \{\n        id: contentCol\n',
+     '    Flickable {\n        id: portFlick\n        anchors.fill: parent\n        contentWidth: width\n'
+     '        contentHeight: drawer.portFullH\n        interactive: drawer.portScroll\n        clip: drawer.portScroll\n'
+     '        boundsBehavior: Flickable.StopAtBounds\n    Column {\n        id: contentCol\n', 1),
+    (r'\n        \}\n    \}\n\}\s*\Z', '\n        }\n    }\n    }\n}\n', 1),
+    # beim Scrollen: Symbol erst nach langem Druecken verschieben (sonst wie im Original sofort)
+    (r'^(\s*)property bool dragging: false\n',
+     r'\1property bool dragging: false\n\1property bool portHeld: false\n\1onPressAndHold: dragArea.portHeld = true\n', 1),
+    (r'^(\s*)dragArea\.pressY = mouse\.y\n', r'\1dragArea.pressY = mouse.y\n\1dragArea.portHeld = false\n', 1),
+    (r'preventStealing: true', 'preventStealing: !drawer.portScroll || dragArea.portHeld', 1),
+    (r'if \(!dragArea\.dragging && \(Math\.abs\(dx\) > 10',
+     'if (!dragArea.dragging && (!drawer.portScroll || dragArea.portHeld) && (Math.abs(dx) > 10', 1),
+])
+
+patch("qml/Main.qml", [
+    IMP,
+    # Android-App oder verknuepftes Volta-Symbol (Telefon -> Telefon-App ...): Android-App starten
+    (r'^    onActiveAppChanged: \{\n',
+     '    onActiveAppChanged: {\n'
+     '        if (activeApp !== "" && AndroidPort.handle(activeApp)) { showGrid = false; activeApp = ""; return }\n', 1),
+])
+
+patch("qml/Settings.qml", [
+    IMP,
+    # Einstellungen > Apps: auch die Android-Apps ein-/ausblenden
+    (r'(\{ id: "bluetooth",    name: "Bluetooth", icon: "qrc:/VoltaApp/icons/bluetooth\.svg" \}\n\s*\])',
+     r'\1.concat(AndroidPort.apps)', 1),
+    # ... und bei Voltas Symbolen waehlen, welche App sie oeffnen
+    (r'^(\s*)TToggle \{\n(\s*)anchors\.right: parent\.right; anchors\.verticalCenter: parent\.verticalCenter\n(\s*)checked: !root\.isAppHidden\(modelData\.id\)',
+     r'\1Text {\n'
+     r'\1    visible: AndroidPort.android && !modelData.android\n'
+     r'\1    anchors.right: parent.right; anchors.rightMargin: 84; anchors.verticalCenter: parent.verticalCenter\n'
+     r'\1    text: AndroidPort.links[modelData.id] ? (AndroidPort.appName(AndroidPort.links[modelData.id]) || AndroidPort.links[modelData.id]) + "  ›" : "Volta  ›"\n'
+     r'\1    color: AndroidPort.links[modelData.id] ? root.blue : root.txtHint; font.pixelSize: 13\n'
+     r'\1    MouseArea { anchors.fill: parent; anchors.margins: -14; onClicked: portLinkPopup.openFor(modelData.id, modelData.name) }\n'
+     r'\1}\n'
+     r'\1TToggle {\n\2anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter\n\3checked: !root.isAppHidden(modelData.id)', 1),
+    (r'\n\}\s*\Z',
+     '\n    PortLinkPopup {\n        id: portLinkPopup\n        anchors.fill: parent\n        z: 9999\n'
+     '        txt: root.txt; txtHint: root.txtHint; accent: root.blue\n    }\n}\n', 1),
 ])
 print("port.py: ok")

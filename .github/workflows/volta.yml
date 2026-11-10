@@ -159,6 +159,8 @@ jobs:
           shot vorschau_volta_1920 1920 720 20000
           shot vorschau_volta_karte 1920 720 40000 VOLTA_PORT_SPLIT=1
           shot vorschau_volta_karte_1280 1280 720 40000 VOLTA_PORT_SPLIT=1
+          shot vorschau_volta_drawer 1920 720 20000 VOLTA_PORT_FAKEAPPS=1 VOLTA_PORT_GRID=1
+          shot vorschau_volta_apps_einstellungen 1920 720 20000 VOLTA_PORT_FAKEAPPS=1 VOLTA_OPEN=settings:App
           ls -la out
       - name: Veröffentlichen
         if: always()

@@ -174,9 +174,11 @@ static void voltaLogOpen()
 #endif
 
 void voltaPortStartMapProxy();   // volta_mapproxy.cpp
+void voltaPortRegisterApps();    // android_apps.cpp
 
 static void voltaPortPrepare()
 {
+    voltaPortRegisterApps();
 #ifndef Q_OS_ANDROID
     // auf dem Linux-Testrechner nur auf Wunsch (dort gibt es sonst Voltas Python-Dienst)
     if (qEnvironmentVariableIsSet("VOLTA_PORT_PROXY")) voltaPortStartMapProxy();
@@ -186,6 +188,12 @@ static void voltaPortPrepare()
             const auto wins = QGuiApplication::allWindows();
             for (QWindow *w : wins)
                 if (w->property("carFullScreen").isValid()) w->setProperty("carFullScreen", false);
+        });
+    if (qEnvironmentVariableIsSet("VOLTA_PORT_GRID"))
+        QTimer::singleShot(7000, qApp, []() {
+            const auto wins = QGuiApplication::allWindows();
+            for (QWindow *w : wins)
+                if (w->property("showGrid").isValid()) w->setProperty("showGrid", true);
         });
 #endif
 #ifdef Q_OS_ANDROID
