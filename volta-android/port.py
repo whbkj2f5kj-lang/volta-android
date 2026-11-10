@@ -717,4 +717,65 @@ patch("qml/Settings.qml", [
 \1SectionTitle { title: qsTr("OBD adapter") }''', 1),
 ])
 
+
+# ── Stufe 4 aus Jarvis ASD: USB STARVIS-2 Dashcam, default OFF ────────────
+patch("qml/Settings.qml", [
+    (r'^([ \t]*)SectionTitle \{ title: qsTr\("OBD adapter"\) \}',
+     r'''\1SectionTitle { title: qsTr("USB dashcam · STARVIS 2") }
+\1Item {
+\1    width: parent.width; height: 46
+\1    Text {
+\1        anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+\1        text: qsTr("Enable USB dashcam & loop recording"); font.pixelSize: 15; color: root.txt
+\1    }
+\1    TToggle {
+\1        anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+\1        checked: VoltaDashcam.enabled
+\1        onToggled: on => VoltaDashcam.setEnabled(on)
+\1    }
+\1}
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
+\1    text: VoltaDashcam.status + (VoltaDashcam.recording ? " · REC " + VoltaDashcam.fps + " fps" : "")
+\1          + " · " + qsTr("Saved events: ") + VoltaDashcam.savedCount
+\1}
+\1Row {
+\1    spacing: 12
+\1    TSecondary {
+\1        label: qsTr("Save event")
+\1        onClicked: if (VoltaDashcam.enabled) VoltaDashcam.saveEvent()
+\1    }
+\1}
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
+\1    text: qsTr("Based on Jarvis ASD USB/UVC camera and 1-minute H.264 loop recorder. Starts only when enabled. Videos: Movies/W204-Dashcam; protected videos: Gesichert. Camera preview is shown in Volta's Camera page. Disable to release the USB camera.")
+\1}
+\1TDivider {}
+\1SectionTitle { title: qsTr("OBD adapter") }''', 1),
+])
+patch("qml/CameraApp.qml", [
+    (r'^import VoltaApp 1\.0
+, 'import VoltaApp 1.0\nimport VoltaPort 1.0\nimport QtQuick.Window', 1),
+    (r'    property bool active: false', '''    property bool active: false
+    // The Android UVC TextureView is placed over this existing main camera tile.
+    // Reuse Jarvis ASD's camera driver without adding a second dashboard.
+    function portHideUsbPreview() { VoltaDashcam.preview(false,0,0,0,0,1,1) }
+    onActiveChanged: if (!active) portHideUsbPreview()
+    Connections {
+        target: VoltaDashcam
+        function onChanged() { if (!VoltaDashcam.enabled) cam.portHideUsbPreview() }
+    }
+    Timer {
+        interval: 500; repeat: true; triggeredOnStart: true
+        running: cam.active && VoltaDashcam.enabled
+        onTriggered: {
+            var w = cam.Window.window
+            if (!w) return
+            var p = mainCam.mapToItem(null,0,0)
+            VoltaDashcam.preview(true,p.x,p.y,mainCam.width,mainCam.height,w.width,w.height)
+        }
+    }''', 1),
+    (r'        label: qsTr\("Rear"\)', '        label: qsTr("Front dashcam")', 1),
+])
+
 print("port.py: ok")
