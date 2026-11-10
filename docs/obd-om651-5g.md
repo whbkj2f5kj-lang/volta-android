@@ -104,3 +104,18 @@ berücksichtigt den tatsächlichen CAN-Antwortabsender; `NO DATA`,
 Negativantworten, abgelehnte Filter und Adapter-Fehler werden unverfälscht
 im Report dokumentiert. **DPF-Rußbeladung wird nicht angefragt**, weil
 dafür weiterhin keine belegte herstellerspezifische Kennung vorliegt.
+
+## OM651 / Delphi CRD3: belegte Kennungen aus WiCAN_W906 (11.11.2026)
+
+Quelle: [mcgyver78/WiCAN_W906](https://github.com/mcgyver78/WiCAN_W906) (GPL-3.0). Dort wurden an einem
+Sprinter W906 316 CDI (OM651, Delphi CRD3, Modelljahr 2016) rund 45 Kennungen des Motorsteuergeraets
+(`7E0 → 7E8`, UDS `22 xxxx`, Standard-Sitzung) gegen die Xentry-Istwerte ermittelt, darunter
+Russbeladung (`604B`), Aschegehalt (`60B4`), Strecke seit Regeneration (`6040`), Regenerationsstatus
+(`6081`), DPF-Differenzdruck (`2012`), Abgastemperaturen, Oeltemperatur und Oelstand. `2007`
+(Bordspannung, /128) deckt sich mit der unabhaengigen MBLink-Angabe; das spricht fuer eine gemeinsame
+Kennungsfamilie.
+
+Volta fuehrt diese Liste in `Crd3Values.kt` und liest sie im Mercedes-Test genau einmal, nur lesend.
+Der Test gleicht Drehzahl, Kuehlmittel, Ansaugluft, Spannung, Luftdruck und Raildruck mit den genormten
+OBD-Werten desselben Motors ab. Erst wenn dieser Abgleich am W204 passt, gelten die Kennungen fuer
+dieses Steuergeraet als bestaetigt und duerfen in die Live-Anzeige.
