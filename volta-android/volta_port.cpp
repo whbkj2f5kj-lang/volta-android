@@ -211,6 +211,7 @@ void voltaPortStartMapProxy();   // volta_mapproxy.cpp
 void voltaPortRegisterApps();    // android_apps.cpp
 void voltaPortRegisterLimits();
 void voltaPortRegisterTpms();
+void voltaPortRegisterDashcam();
 void voltaPortRegisterCar();     // android_car.cpp
 #ifdef Q_OS_ANDROID
 void voltaPortStartSystemService();   // android_system.cpp
@@ -249,6 +250,7 @@ static void voltaPortPrepare()
 {
     voltaPortRegisterApps();
     voltaPortRegisterCar();
+    voltaPortRegisterDashcam();
     voltaPortRegisterTpms();
     voltaPortRegisterLimits();
 #ifndef Q_OS_ANDROID

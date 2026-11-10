@@ -51,6 +51,7 @@ target_sources(VoltaOS PRIVATE
     ${VOLTA_PORT_DIR}/volta_port.cpp
     ${VOLTA_PORT_DIR}/android_apps.cpp
     ${VOLTA_PORT_DIR}/android_car.cpp
+    ${VOLTA_PORT_DIR}/android_dashcam.cpp
     ${VOLTA_PORT_DIR}/android_limits.cpp
     ${VOLTA_PORT_DIR}/android_tpms.cpp
     ${VOLTA_PORT_DIR}/volta_mapproxy.cpp
@@ -123,7 +124,7 @@ if(ANDROID)
         QT_ANDROID_VERSION_CODE "${VOLTA_PORT_CODE}"
         # wie beim Dashboard: als aeltere App gilt Volta auf Android 10 nicht fuer die neuen Sperren
         # (WLAN/Bluetooth ein-/ausschalten, alte Netz-Schnittstellen)
-        QT_ANDROID_TARGET_SDK_VERSION 28)
+        QT_ANDROID_TARGET_SDK_VERSION 27)
     if(VOLTA_OPENSSL_DIR)
         include(${VOLTA_OPENSSL_DIR}/android_openssl.cmake)
         add_android_openssl_libraries(VoltaOS)
@@ -323,7 +324,7 @@ patch("qml/Settings.qml", [
 patch("qml/Settings.qml", [
     (r'"Arcade", qsTr\("System"\)\]', '"Arcade", qsTr("System"), qsTr("Vehicle")]', 1),
     (r'"bluetooth", "apps", "directions_car", "sports_esports", "settings"\]',
-     '"bluetooth", "apps", "directions_car", "sports_esports", "settings", "speed"]', 1),
+     '"bluetooth", "apps", "directions_car", "sports_esports", "settings", "directions_car"]', 1),
     (r'^(\s*)// ══════ PAGINA: SISTEMA ══════\n',
      r'\1// ══════ PAGINA: VEHICLE (Android-Port: OBD, nur lesend) ══════\n'
      r'\1Column {\n'
@@ -397,6 +398,10 @@ patch("qml/Settings.qml", [
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             flickableDirection: Flickable.VerticalFlick
+            interactive: contentHeight > height + 2
+            pressDelay: 100
+            maximumFlickVelocity: 2200
+            flickDeceleration: 1800
 
             // Der Auswahlbalken scrollt zusammen mit den Menueintraegen.
             Rectangle {
@@ -443,7 +448,12 @@ patch("qml/Settings.qml", [
                             font.pixelSize: 15
                             font.weight: index === root.pageIdx ? Font.DemiBold : Font.Normal
                         }
-                        MouseArea { anchors.fill: parent; onClicked: root.pageIdx = index }
+                        // Passive tap recognizer: an actual vertical swipe stays with the Flickable.
+                        // A full-size MouseArea here used to compete with scroll gestures.
+                        TapHandler {
+                            gesturePolicy: TapHandler.DragThreshold
+                            onTapped: root.pageIdx = index
+                        }
                     }
                 }
             }
@@ -705,6 +715,64 @@ patch("qml/Settings.qml", [
 \1}
 \1TDivider {}
 \1SectionTitle { title: qsTr("OBD adapter") }''', 1),
+])
+
+
+# Stufe 4: Dashcam aus dem ASD-Jarvis-Repository, standardmaessig AUS.
+patch("qml/Settings.qml", [
+    (r'^([ \t]*)SectionTitle \{ title: qsTr\("OBD adapter"\) \}',
+     r'''\1SectionTitle { title: qsTr("USB dashcam · STARVIS 2") }
+\1Item {
+\1    width: parent.width; height: 46
+\1    Text {
+\1        anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+\1        text: qsTr("Enable USB dashcam & loop recording"); font.pixelSize: 15; color: root.txt
+\1    }
+\1    TToggle {
+\1        anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+\1        checked: VoltaDashcam.enabled
+\1        onToggled: on => VoltaDashcam.setEnabled(on)
+\1    }
+\1}
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
+\1    text: VoltaDashcam.status + (VoltaDashcam.recording ? " · REC " + VoltaDashcam.fps + " fps" : "")
+\1          + " · " + qsTr("Saved events: ") + VoltaDashcam.savedCount
+\1}
+\1Row {
+\1    spacing: 12
+\1    TSecondary {
+\1        label: qsTr("Save event")
+\1        onClicked: if (VoltaDashcam.enabled) VoltaDashcam.saveEvent()
+\1    }
+\1}
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
+\1    text: qsTr("From Jarvis ASD USB UVC driver and H.264 loop recorder. Default OFF. Files: Movies/W204-Dashcam. Preview: Camera page. Disable to release the camera.")
+\1}
+\1TDivider {}
+\1SectionTitle { title: qsTr("OBD adapter") }''', 1),
+])
+patch("qml/CameraApp.qml", [
+    (r'^import VoltaApp 1\.0$', 'import VoltaApp 1.0\nimport VoltaPort 1.0\nimport QtQuick.Window', 1),
+    (r'    property bool active: false', '''    property bool active: false
+    function portHideUsbPreview() { VoltaDashcam.preview(false,0,0,0,0,1,1) }
+    onActiveChanged: if (!active) portHideUsbPreview()
+    Connections {
+        target: VoltaDashcam
+        function onChanged() { if (!VoltaDashcam.enabled) cam.portHideUsbPreview() }
+    }
+    Timer {
+        interval: 500; repeat: true; triggeredOnStart: true
+        running: cam.active && VoltaDashcam.enabled
+        onTriggered: {
+            var w = cam.Window.window
+            if (!w) return
+            var p = mainCam.mapToItem(null,0,0)
+            VoltaDashcam.preview(true,p.x,p.y,mainCam.width,mainCam.height,w.width,w.height)
+        }
+    }''', 1),
+    (r'        label: qsTr\("Rear"\)', '        label: qsTr("Front dashcam")', 1),
 ])
 
 print("port.py: ok")
