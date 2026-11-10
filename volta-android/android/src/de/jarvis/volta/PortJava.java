@@ -25,6 +25,7 @@ import android.net.wifi.ScanResult;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.WindowManager;
@@ -225,14 +226,33 @@ public class PortJava {
         receiverOn = true;
     }
 
+    private static BluetoothAdapter btAdapter(Context c) {
+        android.bluetooth.BluetoothManager m = (android.bluetooth.BluetoothManager)c.getSystemService(Context.BLUETOOTH_SERVICE);
+        return m == null ? null : m.getAdapter();
+    }
+    private static boolean btPermission(Context c) {
+        return Build.VERSION.SDK_INT < 31 || c.getApplicationInfo().targetSdkVersion < 31 ||
+            c.checkSelfPermission("android.permission.BLUETOOTH_CONNECT") == PackageManager.PERMISSION_GRANTED;
+    }
     public static String btStatus(Context c) {
         JSONObject o = new JSONObject();
         try {
-            BluetoothAdapter a = BluetoothAdapter.getDefaultAdapter();
-            o.put("available", a != null);
-            o.put("poweredOn", a != null && a.isEnabled());
-            o.put("discovering", a != null && a.isDiscovering());
-        } catch (Throwable t) { try { o.put("available", false); o.put("poweredOn", false); o.put("discovering", false); } catch (Exception ignored) {} }
+            BluetoothAdapter a = btAdapter(c);
+            boolean permitted = btPermission(c);
+            o.put("android", true);o.put("available", a != null); o.put("permission", permitted);
+            o.put("poweredOn", a != null && permitted && a.isEnabled());
+            o.put("discovering", a != null && permitted && a.isDiscovering());
+            o.put("message", a == null ? "Android exposes no Bluetooth adapter. BlueStacks usually does not provide Bluetooth hardware to apps. Test Bluetooth on the radio." :
+                !permitted ? "Allow Bluetooth access in Android app settings." : "");
+        } catch (SecurityException t) {
+            try { o.put("available", true);o.put("permission", false);o.put("poweredOn", false);o.put("discovering", false);o.put("message", "Android denied Bluetooth access. Check the app permissions."); } catch(Exception ignored){}
+        } catch (Throwable t) { try {o.put("available", false);o.put("poweredOn",false);o.put("discovering",false);o.put("message", "Bluetooth service unavailable on this Android system.");}catch(Exception ignored){} }
+        return o.toString();
+    }
+    public static String btSettings(Context c) {
+        JSONObject o=new JSONObject();
+        try { c.startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));o.put("ok",true); }
+        catch(Throwable t){try{o.put("ok",false);o.put("message","Android Bluetooth settings are unavailable.");}catch(Exception ignored){}}
         return o.toString();
     }
 
@@ -251,7 +271,7 @@ public class PortJava {
         JSONObject o = new JSONObject();
         JSONArray list = new JSONArray();
         try {
-            BluetoothAdapter a = BluetoothAdapter.getDefaultAdapter();
+            BluetoothAdapter a = btAdapter(c);
             HashSet<String> seen = new HashSet<>();
             if (a != null) {
                 for (BluetoothDevice d : a.getBondedDevices()) {
@@ -289,8 +309,9 @@ public class PortJava {
     public static String btToggle(Context c, boolean on) {
         JSONObject o = new JSONObject();
         try {
-            BluetoothAdapter a = BluetoothAdapter.getDefaultAdapter();
-            o.put("ok", a != null && (on ? a.enable() : a.disable()));
+            BluetoothAdapter a = btAdapter(c);
+            if (a == null) { o.put("ok", false);o.put("message", "No Bluetooth adapter is exposed by Android."); }
+            else { boolean ok=on ? a.enable() : a.disable();o.put("ok",ok);if(!ok)o.put("message","Android could not change Bluetooth. Use Android Bluetooth settings."); }
         } catch (Throwable t) { try { o.put("ok", false); o.put("message", String.valueOf(t)); } catch (Exception ignored) {} }
         return o.toString();
     }
@@ -298,12 +319,13 @@ public class PortJava {
     public static String btScan(Context c, boolean on) {
         JSONObject o = new JSONObject();
         try {
-            BluetoothAdapter a = BluetoothAdapter.getDefaultAdapter();
+            BluetoothAdapter a = btAdapter(c);
             if (a == null) { o.put("ok", false); o.put("message", "no Bluetooth"); return o.toString(); }
+            if (!a.isEnabled()) {o.put("ok",false);o.put("message","Turn Bluetooth on first.");return o.toString();}
             if (on) {
                 ensureReceiver(c);
                 synchronized (PortJava.class) { found.clear(); foundRssi.clear(); }
-                o.put("ok", a.startDiscovery());
+                boolean ok=a.startDiscovery();o.put("ok",ok);if(!ok)o.put("message","Discovery was not started. Check location permission and Android location settings.");
             } else {
                 o.put("ok", a.cancelDiscovery());
             }
@@ -315,7 +337,9 @@ public class PortJava {
     public static String btAction(Context c, String action, String address) {
         JSONObject o = new JSONObject();
         try {
-            BluetoothAdapter a = BluetoothAdapter.getDefaultAdapter();
+            BluetoothAdapter a = btAdapter(c);
+            if(a==null){o.put("ok",false);o.put("message","Android exposes no Bluetooth adapter.");return o.toString();}
+            if(!BluetoothAdapter.checkBluetoothAddress(address)){o.put("ok",false);o.put("message","Invalid Bluetooth address.");return o.toString();}
             BluetoothDevice d = a.getRemoteDevice(address);
             boolean ok;
             String msg = "";
@@ -325,8 +349,9 @@ public class PortJava {
             } else if (action.equals("forget")) {
                 ok = (Boolean) d.getClass().getMethod("removeBond").invoke(d);
             } else if (action.equals("connect") || action.equals("disconnect")) {
-                ok = false;
-                msg = "Use the radio's Bluetooth app to connect the phone";
+                JSONObject delegated=new JSONObject(btSettings(c));
+                ok=delegated.optBoolean("ok",false);
+                msg=ok ? "Complete the connection in Android Bluetooth settings; no connection is claimed until Android reports it." : delegated.optString("message");
             } else {
                 ok = false;
                 msg = "unknown";
@@ -335,6 +360,23 @@ public class PortJava {
             o.put("message", msg);
         } catch (Throwable t) { try { o.put("ok", false); o.put("message", String.valueOf(t)); } catch (Exception ignored) {} }
         return o.toString();
+    }
+
+    public static void prepareWebViews(Context context) {
+        if(!(context instanceof Activity)) return;
+        final Activity activity=(Activity)context;
+        activity.runOnUiThread(() -> hardenViews(activity.getWindow().getDecorView()));
+    }
+    private static void hardenViews(android.view.View view) {
+        if(view instanceof android.webkit.WebView){
+            android.webkit.WebView web=(android.webkit.WebView)view;
+            web.getSettings().setGeolocationEnabled(false);
+            web.getSettings().setAllowFileAccess(false);
+            web.getSettings().setAllowContentAccess(false);
+            web.getSettings().setAllowFileAccessFromFileURLs(false);
+            web.getSettings().setAllowUniversalAccessFromFileURLs(false);
+        }
+        if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)hardenViews(group.getChildAt(i));}
     }
 
     // ═══════════════════════ LAUTSTAERKE / HELLIGKEIT ═══════════════════════
@@ -515,6 +557,184 @@ public class PortJava {
                 i.setData(android.net.Uri.parse("package:" + c.getPackageName()));
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             c.startActivity(i);
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignor…2533 tokens truncated…ED(action);
+        return false;
+#endif
     }
+
+    Q_INVOKABLE void prepareWebViews() {
+#ifdef Q_OS_ANDROID
+        QJniEnvironment env;
+        QJniObject::callStaticMethod<void>("de/jarvis/volta/PortJava","prepareWebViews","(Landroid/content/Context;)V",QNativeInterface::QAndroidApplication::context().object());
+        env.checkAndClearExceptions();
+#endif
+    }
+
+    Q_INVOKABLE void refresh()
+    {
+#ifdef Q_OS_ANDROID
+        if (m_loading) return;
+        m_loading = true;
+        const QString iconDir = m_iconDir;
+        const QPointer<AndroidPort> self(this);
+        std::thread([self, iconDir]() {
+            QVariantList list;
+            QStringList logLines;
+            {
+                QJniEnvironment env;
+                const QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+                const QJniObject pm = ctx.callObjectMethod("getPackageManager", "()Landroid/content/pm/PackageManager;");
+                const QString own = ctx.callObjectMethod("getPackageName", "()Ljava/lang/String;").toString();
+                const QJniObject intent("android/content/Intent", "(Ljava/lang/String;)V",
+                                        jstr(QStringLiteral("android.intent.action.MAIN")).object());
+                intent.callObjectMethod("addCategory", "(Ljava/lang/String;)Landroid/content/Intent;",
+                                        jstr(QStringLiteral("android.intent.category.LAUNCHER")).object());
+                const QJniObject res = pm.callObjectMethod("queryIntentActivities",
+                                                           "(Landroid/content/Intent;I)Ljava/util/List;", intent.object(), jint(0));
+                const int n = res.isValid() ? res.callMethod<jint>("size") : 0;
+                QSet<QString> seen;
+                for (int i = 0; i < n; ++i) {
+                    const QJniObject ri = res.callObjectMethod("get", "(I)Ljava/lang/Object;", jint(i));
+                    const QJniObject ai = ri.getObjectField("activityInfo", "Landroid/content/pm/ActivityInfo;");
+                    const QString pkg = ai.getObjectField("packageName", "Ljava/lang/String;").toString();
+                    if (pkg.isEmpty() || pkg == own || seen.contains(pkg)) continue;
+                    seen.insert(pkg);
+                    const QString name = ri.callObjectMethod("loadLabel", "(Landroid/content/pm/PackageManager;)Ljava/lang/CharSequence;",
+                                                             pm.object())
+                                             .callObjectMethod("toString", "()Ljava/lang/String;").toString();
+                    if (env.checkAndClearExceptions()) continue;
+                    const QString iconFile = iconDir + QLatin1Char('/') + pkg + QStringLiteral(".png");
+                    if (!QFileInfo::exists(iconFile)) {
+                        const QJniObject dr = ri.callObjectMethod("loadIcon", "(Landroid/content/pm/PackageManager;)Landroid/graphics/drawable/Drawable;",
+                                                                  pm.object());
+                        if (!env.checkAndClearExceptions()) {
+                            const QByteArray png = drawableToPng(dr, 144);
+                            QFile f(iconFile);
+                            if (!png.isEmpty() && f.open(QIODevice::WriteOnly)) f.write(png);
+                        }
+                    }
+                    list.append(QVariantMap{{QStringLiteral("id"), QStringLiteral("android:") + pkg},
+                                            {QStringLiteral("pkg"), pkg},
+                                            {QStringLiteral("name"), name.isEmpty() ? pkg : name},
+                                            {QStringLiteral("icon"), QUrl::fromLocalFile(iconFile).toString()},
+                                            {QStringLiteral("android"), true}});
+                    logLines << (name + QStringLiteral(" = ") + pkg);
+                }
+            }
+            std::sort(list.begin(), list.end(), [](const QVariant &a, const QVariant &b) {
+                return a.toMap().value(QStringLiteral("name")).toString().compare(
+                           b.toMap().value(QStringLiteral("name")).toString(), Qt::CaseInsensitive) < 0;
+            });
+            QMetaObject::invokeMethod(qApp, [self, list, logLines]() {
+                if (!self) return;
+                self->m_loading = false;
+                if (list == self->m_apps) return;
+                const bool first = self->m_apps.isEmpty();
+                self->m_apps = list;
+                if (first) qInfo().noquote() << "[apps] installed apps:" << logLines.join(QStringLiteral(" | "));
+                self->applyDefaults();
+                emit self->appsChanged();
+            });
+        }).detach();
+#else
+        // nur fuer die Kontroll-Bildschirmfotos auf Linux: erfundene Eintraege
+        if (qEnvironmentVariableIsSet("VOLTA_PORT_FAKEAPPS") && m_apps.isEmpty()) {
+            const char *names[] = {"ZLINK", "Bluetooth Phone", "Torque", "TPMS", "DVR", "USB Camera", "YouTube",
+                                   "Dashboard W204", "Topgadget Voice", "Spotify", "Google Maps", "Waze"};
+            for (const char *n : names) {
+                const QString name = QString::fromLatin1(n);
+                const QString pkg = QStringLiteral("demo.") + name.toLower().remove(QLatin1Char(' '));
+                m_apps.append(QVariantMap{{QStringLiteral("id"), QStringLiteral("android:") + pkg}, {QStringLiteral("pkg"), pkg},
+                                          {QStringLiteral("name"), name},
+                                          {QStringLiteral("icon"), QStringLiteral("qrc:/VoltaApp/icons/settings.svg")},
+                                          {QStringLiteral("android"), true}});
+            }
+            m_links.insert(QStringLiteral("androidauto"), QStringLiteral("demo.zlink"));
+            m_links.insert(QStringLiteral("phone"), QStringLiteral("demo.bluetoothphone"));
+            emit appsChanged();
+            emit linksChanged();
+        }
+#endif
+    }
+
+signals:
+    void appsChanged();
+    void linksChanged();
+    void mediaAccessChanged();
+
+private:
+    void saveLinks()
+    {
+        QVariantMap m;
+        for (auto it = m_links.begin(); it != m_links.end(); ++it) m.insert(it.key(), it.value());
+        QSettings().setValue(QStringLiteral("port/links"), m);
+    }
+
+    // Beim ersten Mal: CarPlay -> ZLINK, Telefon -> Telefon-App des Radios (wenn eindeutig erkennbar)
+    void applyDefaults()
+    {
+        QSettings s;
+        if (s.value(QStringLiteral("port/defaultsDone")).toBool()) return;
+        auto find = [this](const QStringList &words) -> QString {
+            for (const QVariant &v : m_apps) {
+                const QVariantMap a = v.toMap();
+                const QString hay = (a.value(QStringLiteral("name")).toString() + QLatin1Char(' ')
+                                     + a.value(QStringLiteral("pkg")).toString()).toLower();
+                for (const QString &w : words)
+                    if (hay.contains(w)) return a.value(QStringLiteral("pkg")).toString();
+            }
+            return {};
+        };
+        const QString zlink = find({QStringLiteral("zlink"), QStringLiteral("carplay")});
+        if (!zlink.isEmpty() && !m_links.contains(QStringLiteral("androidauto"))) m_links.insert(QStringLiteral("androidauto"), zlink);
+        const QString phone = find({QStringLiteral("telefon"), QStringLiteral("phone"), QStringLiteral("dialer"),
+                                    QStringLiteral("btphone"), QStringLiteral("bluetooth")});
+        if (!phone.isEmpty() && !m_links.contains(QStringLiteral("phone"))) m_links.insert(QStringLiteral("phone"), phone);
+        s.setValue(QStringLiteral("port/defaultsDone"), true);
+        saveLinks();
+        qInfo().noquote() << "[apps] default links: carplay ->" << (zlink.isEmpty() ? QStringLiteral("-") : zlink)
+                          << ", phone ->" << (phone.isEmpty() ? QStringLiteral("-") : phone);
+        emit linksChanged();
+    }
+
+    QVariantList m_apps;
+    QHash<QString, QString> m_links;
+    QString m_iconDir;
+    bool m_loading = false;
+    bool m_mediaAccess = true;
+};
+
+#ifdef Q_OS_ANDROID
+// Launcher: die Zurueck-Taste darf Volta nicht schliessen
+class BackKeyFilter : public QObject
+{
+public:
+    using QObject::QObject;
+    bool eventFilter(QObject *o, QEvent *e) override
+    {
+        if ((e->type() == QEvent::KeyPress || e->type() == QEvent::KeyRelease || e->type() == QEvent::ShortcutOverride)
+            && static_cast<QKeyEvent *>(e)->key() == Qt::Key_Back)
+            return true;
+        return QObject::eventFilter(o, e);
+    }
+};
+#endif
+
+} // namespace
+
+void voltaPortRegisterApps()
+{
+    // erst beim ersten Zugriff aus QML anlegen: dann ist die App sicher fertig gestartet
+    qmlRegisterSingletonType<AndroidPort>("VoltaPort", 1, 0, "AndroidPort", [](QQmlEngine *, QJSEngine *) -> QObject * {
+        static AndroidPort *port = nullptr;
+        if (!port) port = new AndroidPort(QCoreApplication::instance());
+        QQmlEngine::setObjectOwnership(port, QQmlEngine::CppOwnership);
+        return port;
+    });
+    qmlRegisterType(QUrl(QStringLiteral("qrc:/volta_port/PortLinkPopup.qml")), "VoltaPort", 1, 0, "PortLinkPopup");
+#ifdef Q_OS_ANDROID
+    QTimer::singleShot(0, qApp, []() { qApp->installEventFilter(new BackKeyFilter(qApp)); });
+#endif
 }
+
+#include "android_apps.moc"

@@ -80,6 +80,7 @@ QByteArray bt(const QString &what, const QJsonObject &body)
             kJava, "btAction", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", c.object(),
             QJniObject::fromString(what).object<jstring>(), QJniObject::fromString(addr).object<jstring>()));
     }
+    if (what == QLatin1String("settings")) return jstrToBytes(QJniObject::callStaticObjectMethod(kJava,"btSettings","(Landroid/content/Context;)Ljava/lang/String;",c.object()));
     // Kopplungsanfragen mit PIN zeigt Android selbst an
     if (what == QLatin1String("pair/request")) return R"({"request":null})";
     if (what == QLatin1String("pair/answer")) return R"({"ok":true})";

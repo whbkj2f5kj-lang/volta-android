@@ -52,6 +52,7 @@ target_sources(VoltaOS PRIVATE
     ${VOLTA_PORT_DIR}/android_apps.cpp
     ${VOLTA_PORT_DIR}/android_car.cpp
     ${VOLTA_PORT_DIR}/android_limits.cpp
+    ${VOLTA_PORT_DIR}/android_tpms.cpp
     ${VOLTA_PORT_DIR}/volta_mapproxy.cpp
     ${VOLTA_PORT_DIR}/shim/volta_webshim.h)
 target_include_directories(VoltaOS BEFORE PRIVATE
@@ -89,6 +90,8 @@ else()
     target_link_libraries(VoltaOS PRIVATE Qt6::DBus)
 endif()
 if(ANDROID)
+    find_package(Qt6 REQUIRED COMPONENTS WebView WebViewQuick)
+    target_link_libraries(VoltaOS PRIVATE Qt6::WebView Qt6::WebViewQuick)
     # Standort ueber Android statt serieller GPS-Maus
     get_target_property(_volta_src VoltaOS SOURCES)
     list(REMOVE_ITEM _volta_src src/nav/GpsService.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/nav/GpsService.cpp
@@ -129,6 +132,8 @@ endif()
 ''')
 
 patch("src/main.cpp", [
+    (r'^#include <QtWebEngineQuick>\n', '#include <QtWebEngineQuick>\n#ifdef Q_OS_ANDROID\n#include <QtWebView/QtWebView>\n#endif\n', 1),
+    (r'    QGuiApplication app\(argc, argv\);', '    QGuiApplication app(argc, argv);\n#ifdef Q_OS_ANDROID\n    QtWebView::initialize();\n#endif', 1),
     (r'^(\s*)qputenv\("QT_QPA_PLATFORM", "xcb"\);',
      r'\1{\n#ifndef Q_OS_ANDROID\n\1qputenv("QT_QPA_PLATFORM", "xcb");\n#endif\n\1}', 1),
     # Voltas QML-Modul liegt in den Ressourcen unter :/VoltaApp. Auf Linux findet Qt es zusaetzlich als
@@ -562,6 +567,110 @@ patch("qml/Settings.qml", [
 \1}
 \1TDivider {}
 \1SectionTitle { title: qsTr("OBD adapter") }''', 1),
+])
+
+# ── Stufe 3: Reifendruck und Android-Systemfunktionen ───────────────────────
+patch("qml/CarScene.qml", [
+    IMP,
+    (r'^import VoltaPort 1\.0$', 'import VoltaPort 1.0\nimport "qrc:/volta_port" as Port', 1),
+    (r'    property bool adjustOpen: false', '''    property var portTireCache: []
+    Connections { target: CarModels; function onCurrentChanged() { root.portTireCache = [] } function onPartsChanged() { root.portTireCache = [] } }
+    function portTirePoint(index, item) {
+        var rig = root.userCarMain
+        var cached = root.portTireCache[index]
+        if (rig && rig.loaded && (!cached || !cached.node)) {
+            var code = ["FL", "FR", "RL", "RR"][index]
+            var name = rig.parts["wheel" + code]
+            if (name && typeof name !== "string") name = name.length ? name[0] : ""
+            var node = name ? rig._nodeByName(name) : null
+            if (node) {
+                var bounds = CarModels.partBounds(rig.file, name)
+                var center = bounds.length >= 6 ? Qt.vector3d((bounds[0]+bounds[3])/2, (bounds[1]+bounds[4])/2, (bounds[2]+bounds[5])/2) : Qt.vector3d(0,0,0)
+                cached = {node:node, center:center}; root.portTireCache[index] = cached
+            }
+        }
+        var world = cached && cached.node ? cached.node.mapPositionToScene(cached.center) : carRoot.mapPositionToScene(Qt.vector3d(index % 2 === 0 ? 0.65 : -0.65, -0.15, index < 2 ? 1 : -1))
+        var p = view.mapFrom3DScene(world)
+        return view.mapToItem(item, p.x, p.y)
+    }
+    Port.TireOverlay {
+        anchors.fill: parent; z: 45; scene: root; lightTheme: root.lightTheme
+        visible: VoltaTpms.enabled && !root.uiHidden && !root.fsdMode && !root.replacing && !root.configuring
+    }
+    property bool adjustOpen: false''', 1),
+])
+patch("qml/Main.qml", [
+    (r'    Connections \{\n        target: VoltaLimits\n', '''    Connections {
+        target: VoltaTpms
+        function onWarningTriggered(wheel, reason) {
+            var names = {FL:qsTr("Front left"), FR:qsTr("Front right"), RL:qsTr("Rear left"), RR:qsTr("Rear right")}
+            var reasons = {leak:qsTr("Pressure loss detected"), critical_pressure:qsTr("Very low tyre pressure"), low_pressure:qsTr("Tyre pressure low"), temperature:qsTr("Tyre temperature high"), battery:qsTr("Sensor battery low")}
+            notifStack.notify({id:"tyre-"+wheel, iconType:"info", iconColor:"#ED4E3B", title:names[wheel]||wheel,
+                subtitle:reasons[reason]||reason, autoDismissMs:8000})
+        }
+    }
+    Connections {
+        target: VoltaLimits
+''', 1),
+])
+patch("qml/Settings.qml", [
+    (r'^([ \t]*)SectionTitle \{ title: qsTr\("Speed limits"\) \}', r'''\1SectionTitle { title: qsTr("Tyre pressure") }
+\1Item {
+\1    width: parent.width; height: 42
+\1    Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: qsTr("USB tyre pressure receiver"); color: root.txt; font.pixelSize: 15 }
+\1    TToggle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; checked: VoltaTpms.enabled; onToggled: on => VoltaTpms.setEnabled(on) }
+\1}
+\1Text { width: parent.width; text: VoltaTpms.status; color: root.txtHint; wrapMode: Text.WordWrap; font.pixelSize: 13 }
+\1Text { width: parent.width; text: qsTr("Set cold tyre pressure targets from the vehicle placard. Pressure comparisons stay off until both targets are set."); color: root.txtHint; wrapMode: Text.WordWrap; font.pixelSize: 12 }
+\1Row {
+\1    spacing: 12
+\1    Text { width: 100; anchors.verticalCenter: parent.verticalCenter; text: qsTr("Front"); color: root.txt; font.pixelSize: 14 }
+\1    TSecondary { width: 44; label: "−"; onClicked: VoltaTpms.setFront(VoltaTpms.frontTarget > 0 ? VoltaTpms.frontTarget - 0.1 : 2.4) }
+\1    Text { width: 70; anchors.verticalCenter: parent.verticalCenter; horizontalAlignment: Text.AlignHCenter; text: VoltaTpms.frontTarget > 0 ? VoltaTpms.frontTarget.toFixed(1) + " bar" : "— bar"; color: root.txt; font.pixelSize: 15 }
+\1    TSecondary { width: 44; label: "+"; onClicked: VoltaTpms.setFront(VoltaTpms.frontTarget > 0 ? VoltaTpms.frontTarget + 0.1 : 2.4) }
+\1}
+\1Row {
+\1    spacing: 12
+\1    Text { width: 100; anchors.verticalCenter: parent.verticalCenter; text: qsTr("Rear"); color: root.txt; font.pixelSize: 14 }
+\1    TSecondary { width: 44; label: "−"; onClicked: VoltaTpms.setRear(VoltaTpms.rearTarget > 0 ? VoltaTpms.rearTarget - 0.1 : 2.4) }
+\1    Text { width: 70; anchors.verticalCenter: parent.verticalCenter; horizontalAlignment: Text.AlignHCenter; text: VoltaTpms.rearTarget > 0 ? VoltaTpms.rearTarget.toFixed(1) + " bar" : "— bar"; color: root.txt; font.pixelSize: 15 }
+\1    TSecondary { width: 44; label: "+"; onClicked: VoltaTpms.setRear(VoltaTpms.rearTarget > 0 ? VoltaTpms.rearTarget + 0.1 : 2.4) }
+\1}
+\1Repeater {
+\1    model: 4
+\1    Column {
+\1        width: parent.width; spacing: 6
+\1        property var tire: VoltaTpms.wheels.length > index ? VoltaTpms.wheels[index] : ({valid:false,channel:index})
+\1        Text { text: [qsTr("Front left"),qsTr("Front right"),qsTr("Rear left"),qsTr("Rear right")][index] + " · " + (parent.tire.valid ? Number(parent.tire.pressure).toFixed(2) + " bar · " + parent.tire.temperature + " °C" : qsTr("No fresh data")); color: root.txt; font.pixelSize: 14 }
+\1        TSegmented { options:["VL","VR","HL","HR"]; current:parent.tire.channel; onPicked: channel => VoltaTpms.assign(index,channel) }
+\1    }
+\1}
+\1Text { width: parent.width; text: qsTr("Assign receiver positions to the correct wheels. Sensor learning is handled by the receiver. Missing or stale readings stay unknown; warnings are visual only."); color: root.txtHint; wrapMode: Text.WordWrap; font.pixelSize: 12 }
+\1TDivider {}
+\1SectionTitle { title: qsTr("Speed limits") }''', 1),
+])
+patch("qml/BluetoothSettings.qml", [
+    (r'            root.adapterAvailable = d.available !== false', '            root.adapterAvailable = d.available !== false\n            if (d.message) root.statusMsg = d.message', 1),
+    (r'function\(\) \{\n            root.refreshStatus\(\)\n            if \(on\) root.startScan\(\)', 'function(status, d) {\n            if (d && d.message) root.statusMsg = d.message\n            root.refreshStatus()\n            if (on && d && d.ok) root.startScan()', 1),
+    (r'visible: !root.adapterAvailable && root.poweredOn', 'visible: !root.adapterAvailable', 1),
+    (r'text: qsTr\("No Bluetooth adapter found on the system\."\)', 'text: qsTr("This Android system exposes no Bluetooth adapter. BlueStacks usually cannot provide Bluetooth devices to apps. Test Bluetooth on the radio.")', 1),
+])
+
+
+patch("qml/BluetoothSettings.qml", [
+    (r'    property bool adapterAvailable: true', '    property bool adapterAvailable: true\n    property bool androidBackend: false', 1),
+    (r'            root.adapterAvailable = d.available !== false', '            root.adapterAvailable = d.available !== false\n            root.androidBackend = !!d.android', 1),
+    (r'        // ── dispositivi abbinati ──', '''        Rectangle {
+            visible: root.androidBackend; width: 240; height: 44; radius: 8; color: root.ctrlBg
+            Text { anchors.centerIn: parent; text: qsTr("Android Bluetooth settings"); color: root.txt; font.pixelSize: 14 }
+            MouseArea { anchors.fill: parent; onClicked: root.xhrCall("POST", "/bt/settings", {}, function(status,d) { if(d && d.message)root.statusMsg=d.message }) }
+        }
+        // ── dispositivi abbinati ──''', 1),
+])
+patch("qml/WebApps.qml", [
+    (r'    function key\(u\) \{', '''    function favicon(u) { var m = /^https?:\/\/[^/]+/i.exec(String(u)); return m ? m[0] + "/favicon.ico" : "" }
+    function key(u) {''', 1),
+    (r'"http://127\.0\.0\.1:9098/webapp-icon\?url=" \+ encodeURIComponent\(String\(u\)\)', 'wa.favicon(u)', 1),
 ])
 
 print("port.py: ok")

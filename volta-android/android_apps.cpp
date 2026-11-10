@@ -236,6 +236,14 @@ public:
 #endif
     }
 
+    Q_INVOKABLE void prepareWebViews() {
+#ifdef Q_OS_ANDROID
+        QJniEnvironment env;
+        QJniObject::callStaticMethod<void>("de/jarvis/volta/PortJava","prepareWebViews","(Landroid/content/Context;)V",QNativeInterface::QAndroidApplication::context().object());
+        env.checkAndClearExceptions();
+#endif
+    }
+
     Q_INVOKABLE void refresh()
     {
 #ifdef Q_OS_ANDROID
