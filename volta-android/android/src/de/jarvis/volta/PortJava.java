@@ -20,6 +20,7 @@ import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
+import android.net.Uri;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
@@ -33,6 +34,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -40,6 +42,34 @@ import java.util.Map;
 
 @SuppressWarnings({"deprecation", "MissingPermission"})
 public class PortJava {
+
+    // Kopiert eine SAF/content://-Datei ueber ContentResolver in Voltas privaten Cache.
+    // QFile kann content://-URIs nicht wie normale Dateipfade oeffnen.
+    public static boolean copyContentUri(Context c, String uriString, String targetPath) {
+        InputStream in = null;
+        FileOutputStream out = null;
+        try {
+            Uri uri = Uri.parse(uriString);
+            in = c.getContentResolver().openInputStream(uri);
+            if (in == null) return false;
+            File target = new File(targetPath);
+            File parent = target.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs()) return false;
+            out = new FileOutputStream(target, false);
+            byte[] buffer = new byte[64 * 1024];
+            int count;
+            while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+            out.flush();
+            return target.isFile() && target.length() > 0;
+        } catch (Throwable t) {
+            android.util.Log.e("VoltaPort", "copyContentUri failed: " + uriString, t);
+            return false;
+        } finally {
+            try { if (in != null) in.close(); } catch (Exception ignored) {}
+            try { if (out != null) out.close(); } catch (Exception ignored) {}
+        }
+    }
+
 
     // ═══════════════════════ WLAN ═══════════════════════
 
