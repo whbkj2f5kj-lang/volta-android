@@ -23,5 +23,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Validate Volta QML patch script syntax
+        run: python3 -m py_compile volta-android/port.py
       - name: Run Android library unit tests
         run: gradle -p core testReleaseUnitTest assembleRelease --console=plain

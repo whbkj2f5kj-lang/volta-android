@@ -680,4 +680,31 @@ patch("qml/WebApps.qml", [
 patch("qml/BrowserApp.qml", [(r'webContent\.loading', 'webContent.portLoading', 4)])
 patch("qml/WebAppView.qml", [(r'web\.loading', 'web.portLoading', 4)])
 
+
+# ── Mercedes: one-tap, read-only test for W204 722.6 (results are research only) ──
+patch("qml/Settings.qml", [
+    (r'^([ \t]*)SectionTitle \{ title: qsTr\("OBD adapter"\) \}',
+     r'''\1SectionTitle { title: qsTr("Mercedes diagnostic check · 5G-Tronic") }
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
+\1    text: qsTr("Read-only targeted check: 722.6 / EGS via 7E1–7E9 (21 30), and OM651/CRD3 candidate 22 2007. No full PID sweep. Unverified values are not shown as measurements.")
+\1}
+\1Row {
+\1    spacing: 12
+\1    TSecondary { label: VoltaCar.mercedesBusy ? qsTr("Testing…") : qsTr("Test Mercedes"); onClicked: if (!VoltaCar.mercedesBusy) VoltaCar.runMercedesCheck() }
+\1    TSecondary { label: qsTr("Save report"); onClicked: VoltaCar.exportMercedesCheck() }
+\1}
+\1Text {
+\1    width: parent.width; wrapMode: Text.WrapAnywhere; font.pixelSize: 12; color: root.txtSub
+\1    text: VoltaCar.mercedesReport
+\1}
+\1Text {
+\1    visible: VoltaCar.mercedesExport !== ""
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
+\1    text: VoltaCar.mercedesExport
+\1}
+\1TDivider {}
+\1SectionTitle { title: qsTr("OBD adapter") }''', 1),
+])
+
 print("port.py: ok")

@@ -44,6 +44,9 @@ class VoltaCarQml : public QObject
     Q_PROPERTY(QString adapterName READ adapterName NOTIFY settingsChanged)
     Q_PROPERTY(bool demo READ demo NOTIFY settingsChanged)
     Q_PROPERTY(QVariantList adapters READ adapters NOTIFY adaptersChanged)
+    Q_PROPERTY(bool mercedesBusy READ mercedesBusy NOTIFY mercedesChanged)
+    Q_PROPERTY(QString mercedesReport READ mercedesReport NOTIFY mercedesChanged)
+    Q_PROPERTY(QString mercedesExport READ mercedesExport NOTIFY mercedesChanged)
 public:
     explicit VoltaCarQml(QObject *parent) : QObject(parent)
     {
@@ -81,6 +84,28 @@ public:
     QString adapterName() const { return m_name; }
     bool demo() const { return m_demo; }
     QVariantList adapters() const { return m_adapters; }
+    bool mercedesBusy() const { return m_mercedesBusy; }
+    QString mercedesReport() const { return m_mercedesReport; }
+    QString mercedesExport() const { return m_mercedesExport; }
+
+    Q_INVOKABLE void runMercedesCheck()
+    {
+#ifdef Q_OS_ANDROID
+        QJniEnvironment env;
+        QJniObject::callStaticMethod<void>(kCar, "runMercedesCheck", "()V");
+        if (env.checkAndClearExceptions()) qWarning() << "[car] Mercedes test failed to start";
+#endif
+    }
+
+    Q_INVOKABLE void exportMercedesCheck()
+    {
+#ifdef Q_OS_ANDROID
+        QJniEnvironment env;
+        QJniObject::callStaticMethod<void>(kCar, "exportMercedesCheck", "(Landroid/content/Context;)V",
+                                           QNativeInterface::QAndroidApplication::context().object());
+        if (env.checkAndClearExceptions()) qWarning() << "[car] Mercedes report export failed";
+#endif
+    }
 
     Q_INVOKABLE void setAdapter(const QString &address, const QString &name)
     {
@@ -120,6 +145,7 @@ signals:
     void changed();
     void settingsChanged();
     void adaptersChanged();
+    void mercedesChanged();
 
 private:
     void restart()
@@ -153,6 +179,18 @@ private:
         m_boost = d("boost"); m_voltage = d("voltage"); m_consumption = d("consumption"); m_fuelRate = d("fuelRate");
         m_engine = o.value(QLatin1String("engineRunning")).toBool();
         emit changed();
+        // Lightweight state-only read: diagnostic work runs on Kotlin IO dispatcher.
+        const QString diagnostic = QJniObject::callStaticObjectMethod(kCar, "mercedesCheckStatus", "()Ljava/lang/String;").toString();
+        if (!env.checkAndClearExceptions()) {
+            const QJsonObject report = QJsonDocument::fromJson(diagnostic.toUtf8()).object();
+            const bool busy = report.value(QLatin1String("busy")).toBool();
+            const QString text = report.value(QLatin1String("report")).toString();
+            const QString exported = report.value(QLatin1String("export")).toString();
+            if (busy != m_mercedesBusy || text != m_mercedesReport || exported != m_mercedesExport) {
+                m_mercedesBusy = busy; m_mercedesReport = text; m_mercedesExport = exported;
+                emit mercedesChanged();
+            }
+        }
 #endif
     }
 
@@ -162,6 +200,8 @@ private:
     double m_rate = 0, m_boost = -1, m_voltage = -1, m_consumption = -1, m_fuelRate = -1;
     int m_speed = -1, m_rpm = -1, m_coolant = -1, m_oil = -1;
     QVariantList m_adapters;
+    bool m_mercedesBusy = false;
+    QString m_mercedesReport, m_mercedesExport;
 };
 
 } // namespace
