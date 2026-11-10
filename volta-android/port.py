@@ -718,7 +718,7 @@ patch("qml/Settings.qml", [
 ])
 
 
-# ── Stufe 4 aus Jarvis ASD: USB STARVIS-2 Dashcam, default OFF ────────────
+# Stufe 4: Dashcam aus dem ASD-Jarvis-Repository, standardmaessig AUS.
 patch("qml/Settings.qml", [
     (r'^([ \t]*)SectionTitle \{ title: qsTr\("OBD adapter"\) \}',
      r'''\1SectionTitle { title: qsTr("USB dashcam · STARVIS 2") }
@@ -748,17 +748,14 @@ patch("qml/Settings.qml", [
 \1}
 \1Text {
 \1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
-\1    text: qsTr("Based on Jarvis ASD USB/UVC camera and 1-minute H.264 loop recorder. Starts only when enabled. Videos: Movies/W204-Dashcam; protected videos: Gesichert. Camera preview is shown in Volta's Camera page. Disable to release the USB camera.")
+\1    text: qsTr("From Jarvis ASD USB UVC driver and H.264 loop recorder. Default OFF. Files: Movies/W204-Dashcam. Preview: Camera page. Disable to release the camera.")
 \1}
 \1TDivider {}
 \1SectionTitle { title: qsTr("OBD adapter") }''', 1),
 ])
 patch("qml/CameraApp.qml", [
-    (r'^import VoltaApp 1\.0
-, 'import VoltaApp 1.0\nimport VoltaPort 1.0\nimport QtQuick.Window', 1),
+    (r'^import VoltaApp 1\.0$', 'import VoltaApp 1.0\nimport VoltaPort 1.0\nimport QtQuick.Window', 1),
     (r'    property bool active: false', '''    property bool active: false
-    // The Android UVC TextureView is placed over this existing main camera tile.
-    // Reuse Jarvis ASD's camera driver without adding a second dashboard.
     function portHideUsbPreview() { VoltaDashcam.preview(false,0,0,0,0,1,1) }
     onActiveChanged: if (!active) portHideUsbPreview()
     Connections {
