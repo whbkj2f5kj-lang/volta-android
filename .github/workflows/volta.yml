@@ -315,7 +315,8 @@ jobs:
           QTA=$RUNNER_TEMP/Qt/$QT_VERSION/${{ matrix.qtarch }}
           cp $QTA/src/android/templates/build.gradle volta-android/android/build.gradle
           grep -n "fileTree" volta-android/android/build.gradle
-          printf '\ndependencies {\n    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.0.20"\n    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"\n    implementation "com.github.mik3y:usb-serial-for-android:3.8.1"\n}\nrepositories { maven { url "https://jitpack.io"; content { includeGroup "com.github.mik3y" } } }\n' >> volta-android/android/build.gradle
+          printf '\ndependencies {\n    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.0.20"\n    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"\n    implementation "com.github.mik3y:usb-serial-for-android:3.8.1"
+    implementation "com.herohan:UVCAndroid:1.0.13"\n}\nrepositories { maven { url "https://jitpack.io"; content { includeGroup "com.github.mik3y" } } }\n' >> volta-android/android/build.gradle
           A=volta-android/android/assets/volta
           mkdir -p $A/assets
           cp -r upstream/services $A/
