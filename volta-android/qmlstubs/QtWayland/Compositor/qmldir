@@ -1,0 +1,5 @@
+module QtWayland.Compositor
+WaylandCompositor 1.0 WaylandCompositor.qml
+WaylandOutput 1.0 WaylandOutput.qml
+WaylandQuickItem 1.0 WaylandQuickItem.qml
+ShellSurfaceItem 1.0 ShellSurfaceItem.qml

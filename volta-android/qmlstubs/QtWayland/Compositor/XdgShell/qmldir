@@ -1,0 +1,6 @@
+module QtWayland.Compositor.XdgShell
+XdgShell 1.0 XdgShell.qml
+XdgSurface 1.0 XdgSurface.qml
+XdgToplevel 1.0 XdgToplevel.qml
+XdgPopup 1.0 XdgPopup.qml
+XdgDecorationManagerV1 1.0 XdgDecorationManagerV1.qml

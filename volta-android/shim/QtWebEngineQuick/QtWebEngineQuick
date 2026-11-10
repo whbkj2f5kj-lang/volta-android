@@ -1,0 +1,3 @@
+// Platzhalter: Qt WebEngine gibt es auf Android nicht. GPL-3.0-or-later
+#pragma once
+namespace QtWebEngineQuick { inline void initialize() {} }

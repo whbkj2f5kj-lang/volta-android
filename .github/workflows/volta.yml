@@ -1,0 +1,263 @@
+name: Volta Android-Port
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  VOLTA_REPO: https://github.com/Omardigio/VoltaOS.git
+  VOLTA_COMMIT: 7304484efe66a5412445f51838f68ef56075fd5f
+  # Karte: MapLibre fuer Qt, derselbe Stand, den VoltaOS selbst mitliefert (third_party/maplibre/README.md)
+  MAPLIBRE_REPO: https://github.com/maplibre/maplibre-native-qt.git
+  MAPLIBRE_COMMIT: 7da5c15c8ffef4f4593afebebfee548218e53ab1
+  QT_VERSION: 6.11.1
+  QT_MODULES: qtquick3d qtshadertools qtquicktimeline qtlocation qtpositioning qtmultimedia qtwebsockets qtvirtualkeyboard qt5compat
+  NDK_VERSION: 27.2.12479018
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  # MapLibre wird einmal je Zielsystem gebaut (dauert lange) und dann aus dem Zwischenspeicher genommen.
+  maplibre:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux, qtarch: linux_gcc_64, abi: '' }
+          - { name: arm64, qtarch: android_arm64_v8a, abi: arm64-v8a }
+          - { name: arm32, qtarch: android_armv7, abi: armeabi-v7a }
+          - { name: x86_64, qtarch: android_x86_64, abi: x86_64 }   # fuer den Android-Emulator am PC
+    steps:
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: mlinstall
+          key: maplibre-${{ env.MAPLIBRE_COMMIT }}-qt${{ env.QT_VERSION }}-${{ matrix.name }}-v1
+      - name: Quelltext
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git init -q ml && cd ml
+          git remote add origin "$MAPLIBRE_REPO"
+          git fetch -q --depth 1 origin "$MAPLIBRE_COMMIT" && git checkout -q FETCH_HEAD
+          git submodule update --init --depth 1 vendor/maplibre-native
+          cd vendor/maplibre-native && git submodule update --init --recursive --depth 1
+      - uses: actions/setup-java@v4
+        if: steps.cache.outputs.cache-hit != 'true' && matrix.abi != ''
+        with: { distribution: temurin, java-version: 17 }
+      - uses: jurplel/install-qt-action@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: qtlocation qtpositioning
+          dir: ${{ runner.temp }}
+      - uses: jurplel/install-qt-action@v4
+        if: steps.cache.outputs.cache-hit != 'true' && matrix.abi != ''
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: all_os
+          target: android
+          arch: ${{ matrix.qtarch }}
+          modules: qtlocation qtpositioning
+          dir: ${{ runner.temp }}
+      - name: Bauen
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q ninja-build libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-dev
+          QT=$RUNNER_TEMP/Qt/$QT_VERSION
+          chmod -R u+x $QT/*/bin $QT/*/libexec 2>/dev/null || true
+          COMMON="-G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.19 -DQT_VERSION_MAJOR=6 -DMLN_WITH_OPENGL=ON -DMLN_QT_WITH_WIDGETS=OFF -DCMAKE_INSTALL_PREFIX=$PWD/mlinstall"
+          if [ -z "${{ matrix.abi }}" ]; then
+            cmake -S ml -B $RUNNER_TEMP/mlbuild $COMMON -DMLN_QT_WITH_INTERNAL_ICU=ON \
+              -DCMAKE_TOOLCHAIN_FILE=$QT/gcc_64/lib/cmake/Qt6/qt.toolchain.cmake 2>&1 | tee ml_cmake.log
+          else
+            for i in 1 2 3; do
+              yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;$NDK_VERSION" > /dev/null && break || sleep 20
+            done
+            export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION
+            export QT_HOST_PATH=$QT/gcc_64
+            cmake -S ml -B $RUNNER_TEMP/mlbuild $COMMON -DANDROID_ABI=${{ matrix.abi }} -DQT_HOST_PATH=$QT/gcc_64 \
+              -DANDROID_SDK_ROOT=$ANDROID_SDK_ROOT -DANDROID_NDK_ROOT=$ANDROID_NDK_ROOT \
+              -DCMAKE_TOOLCHAIN_FILE=$QT/${{ matrix.qtarch }}/lib/cmake/Qt6/qt.toolchain.cmake 2>&1 | tee ml_cmake.log
+          fi
+          cmake --build $RUNNER_TEMP/mlbuild 2>&1 | tee ml_build.log | grep -E "error|FAILED|^\[[0-9]+/[0-9]+\] Linking" || true
+          cmake --install $RUNNER_TEMP/mlbuild > ml_install.log 2>&1
+          find mlinstall -maxdepth 3 | head -n 60
+          test -d mlinstall/lib/cmake/QMapLibre
+      - name: Protokoll bei Fehler
+        if: failure()
+        run: |
+          gh release view volta -R ${{ github.repository }} >/dev/null 2>&1 || gh release create volta -R ${{ github.repository }} --title "Volta OS (Android-Port)" --notes "Android-Port von VoltaOS" --prerelease
+          mkdir -p out
+          for f in ml_cmake.log ml_build.log ml_install.log; do [ -f $f ] && tail -c 400000 $f > out/maplibre_${{ matrix.name }}_$f; done
+          gh release upload volta -R ${{ github.repository }} out/* --clobber || true
+
+  # Gleicher Quelltext mit denselben Platzhaltern auf Linux: liefert Bildschirmfotos zur Kontrolle.
+  vorschau:
+    needs: maplibre
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: mlinstall
+          key: maplibre-${{ env.MAPLIBRE_COMMIT }}-qt${{ env.QT_VERSION }}-linux-v1
+          fail-on-cache-miss: true
+      - name: VoltaOS holen
+        run: |
+          git init -q upstream && cd upstream
+          git fetch -q --depth 1 "$VOLTA_REPO" "$VOLTA_COMMIT" && git checkout -q FETCH_HEAD
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: ${{ env.QT_MODULES }}
+          dir: ${{ runner.temp }}
+          cache: true
+      - name: Pakete
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ninja-build xvfb libgl1-mesa-dev libegl1-mesa-dev libgl1-mesa-dri libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1 libxcb-image0 libxcb-render-util0 libxcb-xinerama0 \
+            libpulse0 libfontconfig1 libdbus-1-3 x11-utils
+      - name: Bauen
+        run: |
+          python3 volta-android/port.py upstream
+          B=$RUNNER_TEMP/vbuild
+          cmake -S upstream -B $B -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DVOLTA_PORT_DIR=$PWD/volta-android -DVOLTA_PORT_STAMP=${GITHUB_SHA::8} -DVOLTA_MAPLIBRE_DIR=$PWD/mlinstall 2>&1 | tee cmake.log
+          cmake --build $B 2>&1 | tee build.log | grep -E "error|Error|FAILED|^\[[0-9]+/[0-9]+\] Linking" || true
+          test -x $B/VoltaOS
+      - name: Bildschirmfotos
+        run: |
+          B=$RUNNER_TEMP/vbuild
+          mkdir -p out stage/assets stage/third_party
+          cp -r upstream/services stage/
+          for d in radio_logos theater toybox toybox-audio static; do cp -r upstream/assets/$d stage/assets/; done
+          cp -r mlinstall stage/third_party/maplibre
+          ls stage/third_party/maplibre stage/third_party/maplibre/lib stage/third_party/maplibre/plugins/* || true
+          export LD_LIBRARY_PATH=$PWD/mlinstall/lib:$LD_LIBRARY_PATH
+          # Programm allein in einen eigenen Ordner: wie auf Android ohne die Build-Dateien daneben
+          mkdir -p stage/bin && cp $B/VoltaOS stage/bin/
+          shot() { # name breite hoehe wartezeit [umgebung...]
+            n=$1; w=$2; h=$3; ms=$4; shift 4
+            env LIBGL_ALWAYS_SOFTWARE=1 VOLTA_PORT_PROXY=1 VOLTA_DIR=$PWD/stage VOLTA_SHOT=$PWD/out/$n.png:$ms "$@" \
+              timeout $((ms / 1000 + 20)) xvfb-run -a -s "-screen 0 ${w}x${h}x24" $PWD/stage/bin/VoltaOS > out/$n.log 2>&1 || true
+            grep -E "mapproxy|maplibre|MapLibre|geoservices" out/$n.log | head -n 12 || true
+          }
+          shot vorschau_volta_setup 1280 720 12000
+          mkdir -p stage/data && echo 1 > stage/data/setup_done
+          shot vorschau_volta_1920 1920 720 20000
+          shot vorschau_volta_karte 1920 720 40000 VOLTA_PORT_SPLIT=1
+          shot vorschau_volta_karte_1280 1280 720 40000 VOLTA_PORT_SPLIT=1
+          ls -la out
+      - name: Veröffentlichen
+        if: always()
+        run: |
+          mkdir -p out && cp cmake.log build.log out/ 2>/dev/null || true
+          gh release view volta >/dev/null 2>&1 || gh release create volta --title "Volta OS (Android-Port)" \
+            --notes "Automatischer Build des Android-Ports von VoltaOS (GPL-3.0). Quelle: https://github.com/Omardigio/VoltaOS" --prerelease
+          for f in out/*; do mv "$f" "out/linux_$(basename $f)"; done
+          gh release upload volta out/* --clobber
+
+  android:
+    needs: maplibre
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { qtarch: android_arm64_v8a, name: arm64 }
+          - { qtarch: android_armv7, name: arm32 }
+          - { qtarch: android_x86_64, name: x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: mlinstall
+          key: maplibre-${{ env.MAPLIBRE_COMMIT }}-qt${{ env.QT_VERSION }}-${{ matrix.name }}-v1
+          fail-on-cache-miss: true
+      - name: VoltaOS holen
+        run: |
+          git init -q upstream && cd upstream
+          git fetch -q --depth 1 "$VOLTA_REPO" "$VOLTA_COMMIT" && git checkout -q FETCH_HEAD
+          cd .. && git clone -q --depth 1 https://github.com/KDAB/android_openssl.git
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: ${{ env.QT_MODULES }}
+          dir: ${{ runner.temp }}
+          cache: true
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: all_os
+          target: android
+          arch: ${{ matrix.qtarch }}
+          modules: ${{ env.QT_MODULES }}
+          dir: ${{ runner.temp }}
+          cache: true
+      - name: Android-SDK
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q ninja-build
+          for i in 1 2 3; do
+            yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;$NDK_VERSION" "platforms;android-35" "build-tools;35.0.0" > /dev/null && break || sleep 20
+          done
+          test -d $ANDROID_SDK_ROOT/ndk/$NDK_VERSION
+      - name: Schlüssel (bleibt zwischen Builds gleich, damit Updates ohne Deinstallieren gehen)
+        id: key
+        uses: actions/cache@v4
+        with:
+          path: volta.jks
+          key: volta-keystore-v1
+      - if: steps.key.outputs.cache-hit != 'true'
+        run: keytool -genkeypair -keystore volta.jks -storepass voltaport -keypass voltaport -alias volta -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Volta Port"
+      - name: Bauen
+        run: |
+          python3 volta-android/port.py upstream
+          A=volta-android/android/assets/volta
+          mkdir -p $A/assets
+          cp -r upstream/services $A/
+          for d in radio_logos theater toybox toybox-audio static; do cp -r upstream/assets/$d $A/assets/; done
+          find $A -name "__pycache__" -prune -exec rm -rf {} +
+          QT=$RUNNER_TEMP/Qt/$QT_VERSION
+          B=$RUNNER_TEMP/vbuild   # ausserhalb des Repos: dort liegt ein fremdes settings.gradle
+          chmod -R u+x $QT/*/bin $QT/*/libexec 2>/dev/null || true
+          $QT/${{ matrix.qtarch }}/bin/qt-cmake -S upstream -B $B -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DQT_HOST_PATH=$QT/gcc_64 -DANDROID_SDK_ROOT=$ANDROID_SDK_ROOT -DANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION \
+            -DVOLTA_PORT_DIR=$PWD/volta-android -DVOLTA_PORT_STAMP=${GITHUB_SHA::8} -DVOLTA_OPENSSL_DIR=$PWD/android_openssl \
+            -DVOLTA_MAPLIBRE_DIR=$PWD/mlinstall \
+            -DVOLTA_PORT_VERSION=0.1.${{ github.run_number }} -DVOLTA_PORT_CODE=${{ github.run_number }} 2>&1 | tee cmake.log
+          cmake --build $B --target apk -- -k 0 2>&1 | tee build.log | grep -E "error|Error|FAILED|BUILD|Android package built" || true
+          find $B/android-build -name "*.apk"
+          U=$(find $B/android-build -name "*release-unsigned.apk" | head -n 1)
+          test -n "$U"
+          unzip -l "$U" | grep -i "maplibre" || { echo "MapLibre fehlt in der APK"; exit 1; }
+          $ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner sign --ks volta.jks --ks-pass pass:voltaport --key-pass pass:voltaport \
+            --ks-key-alias volta --out volta-${{ matrix.name }}.apk "$U"
+          ls -la volta-${{ matrix.name }}.apk
+      - name: Veröffentlichen
+        if: always()
+        run: |
+          gh release view volta >/dev/null 2>&1 || gh release create volta --title "Volta OS (Android-Port)" \
+            --notes "Automatischer Build des Android-Ports von VoltaOS (GPL-3.0). Quelle: https://github.com/Omardigio/VoltaOS" --prerelease
+          mkdir -p out
+          cp cmake.log out/android_${{ matrix.name }}_cmake.log 2>/dev/null || true
+          cp build.log out/android_${{ matrix.name }}_build.log 2>/dev/null || true
+          cp volta-${{ matrix.name }}.apk out/ 2>/dev/null || true
+          gh release upload volta out/* --clobber
