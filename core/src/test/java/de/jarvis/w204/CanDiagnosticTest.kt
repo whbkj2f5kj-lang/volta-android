@@ -1,6 +1,7 @@
 package de.jarvis.w204
 
 import de.jarvis.w204.obd.CanDiagnostic
+import de.jarvis.w204.obd.MercedesDiagnostics
 import de.jarvis.w204.obd.ReadOnly
 import de.jarvis.w204.obd.SafeElm
 import org.junit.Assert.*
@@ -53,4 +54,43 @@ class CanDiagnosticTest {
         assertTrue(ReadOnly.isAllowed("22F100"))
         assertTrue(ReadOnly.isAllowed("2130"))
     }
+    @Test fun documentedMercedesRouteUsesIndependentResponseId() {
+        val commands = mutableListOf<String>()
+        val elm = SafeElm { cmd, _ ->
+            commands += cmd
+            if (cmd.startsWith("AT")) "OK"
+            else "7E8 03 62 F1 97\\r482 03 62 F1 97"
+        }
+        val eis = MercedesDiagnostics.documentedRoutes.single { it.tx == 0x612 }
+        elm.targetRoute(eis)
+        assertEquals("62F197", elm.request("22F197"))
+        assertTrue(commands.contains("ATSH612"))
+        assertTrue(commands.contains("ATCRA482"))
+        elm.restore()
+        assertEquals(listOf("ATH0", "ATCRA", "ATSH7DF"), commands.takeLast(3))
+    }
+
+    @Test fun manufacturerRouteCannotAcceptWrongSourceOrHeaderlessReply() {
+        val route = MercedesDiagnostics.documentedRoutes.single { it.tx == 0x632 }
+        val wrong = SafeElm { cmd, _ -> if (cmd.startsWith("AT")) "OK" else "7E8 03 62 F1 97" }
+        wrong.targetRoute(route)
+        assertEquals("NO DATA", wrong.request("22F197"))
+        val untagged = SafeElm { cmd, _ -> if (cmd.startsWith("AT")) "OK" else "62F197" }
+        untagged.targetRoute(route)
+        assertEquals("NO DATA", untagged.request("22F197"))
+    }
+
+    @Test fun manufacturerRouteFailsClosedWhenAdapterRejectsFilter() {
+        val elm = SafeElm { cmd, _ -> if (cmd == "ATCRA482") "?" else "OK" }
+        val eis = MercedesDiagnostics.documentedRoutes.single { it.tx == 0x612 }
+        assertThrows(IllegalStateException::class.java) { elm.targetRoute(eis) }
+    }
+
+    @Test fun batteryCandidateIsSourceBackedButStrictlyDecoded() {
+        assertEquals(11.96875, MercedesDiagnostics.decodeCrd3BatteryVolts("62 20 07 05 FC")!!, 0.00001)
+        for (bad in listOf("622007", "62200705FC00", "7F2231", "62200805FC", "622007FFFF", "INVALID")) {
+            assertNull(bad, MercedesDiagnostics.decodeCrd3BatteryVolts(bad))
+        }
+    }
+
 }
