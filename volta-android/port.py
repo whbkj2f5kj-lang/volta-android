@@ -360,4 +360,79 @@ patch("qml/Settings.qml", [
      r'\1}\n\n'
      r'\1// ══════ PAGINA: SISTEMA ══════\n', 1),
 ])
+
+# ── Settings-Navigation: Seitenleiste auf kleinen Touchscreens scrollbar ──────
+# "Vehicle" ist der elfte Eintrag. Die originale Sidebar-Column war nicht
+# scrollbar; auf 1024x600 lag der Eintrag dadurch ausserhalb des Bildschirms.
+patch("qml/Settings.qml", [
+    (r'(?s)    Rectangle \{\n        id: sidebar\n.*?\n    \}\n\n    component SectionTitle',
+'''    Rectangle {
+        id: sidebar
+        x: 0; y: root.topBarHeight; width: 250; height: parent.height - root.topBarHeight
+        color: root.sideBg
+
+        Flickable {
+            id: sidebarFlick
+            anchors.fill: parent
+            contentWidth: width
+            contentHeight: Math.max(height, pageColumn.implicitHeight + 40)
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
+
+            // Der Auswahlbalken scrollt zusammen mit den Menueintraegen.
+            Rectangle {
+                x: 16; width: parent.width - 32; height: 46; radius: 8
+                y: 20 + root.pageIdx * 52
+                color: root.lightTheme ? "#D5D5D5" : "#3A3A3A"
+                Behavior on y {
+                    NumberAnimation { duration: root.selAnimMs; easing.type: root.selAnimCurve; easing.overshoot: root.selAnimOvershoot }
+                }
+            }
+
+            Column {
+                id: pageColumn
+                x: 16; y: 20; width: parent.width - 32; spacing: 6
+
+                Repeater {
+                    model: root.pages
+                    Rectangle {
+                        width: parent.width; height: 46; radius: 8
+                        color: "transparent"
+                        Item {
+                            x: 16; anchors.verticalCenter: parent.verticalCenter
+                            width: 22; height: 22
+                            Image {
+                                id: pgIconImg
+                                anchors.fill: parent
+                                source: "qrc:/VoltaApp/icons/ms_" + root.pageIcons[index] + ".svg"
+                                sourceSize: Qt.size(44, 44)
+                                fillMode: Image.PreserveAspectFit
+                                visible: false
+                            }
+                            ColorOverlay {
+                                anchors.fill: pgIconImg
+                                source: pgIconImg
+                                color: index === root.pageIdx ? root.txt : root.txtSub
+                                Behavior on color { ColorAnimation { duration: root.selAnimMs } }
+                            }
+                        }
+                        Text {
+                            x: 52; anchors.verticalCenter: parent.verticalCenter
+                            text: modelData
+                            color: index === root.pageIdx ? root.txt : root.txtSub
+                            Behavior on color { ColorAnimation { duration: root.selAnimMs } }
+                            font.pixelSize: 15
+                            font.weight: index === root.pageIdx ? Font.DemiBold : Font.Normal
+                        }
+                        MouseArea { anchors.fill: parent; onClicked: root.pageIdx = index }
+                    }
+                }
+            }
+        }
+    }
+
+    component SectionTitle''', 1),
+])
+
 print("port.py: ok")
