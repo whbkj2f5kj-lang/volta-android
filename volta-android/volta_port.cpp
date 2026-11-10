@@ -250,6 +250,7 @@ static void voltaPortPrepare()
 {
     voltaPortRegisterApps();
     voltaPortRegisterCar();
+    voltaPortRegisterDashcam();
     voltaPortRegisterTpms();
     voltaPortRegisterLimits();
 #ifndef Q_OS_ANDROID
