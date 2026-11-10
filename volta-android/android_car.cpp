@@ -166,7 +166,14 @@ private:
         QJniEnvironment env;
         const QString json = QJniObject::callStaticObjectMethod(kCar, "snapshot", "()Ljava/lang/String;").toString();
         if (env.checkAndClearExceptions()) return;
-        const QJsonObject o = QJsonDocument::fromJson(json.toUtf8()).object();
+        const QJsonDocument snapshot = QJsonDocument::fromJson(json.toUtf8());
+        if (!snapshot.isObject()) return;
+        const QJsonObject o = snapshot.object();
+        // Avoid notifying every QML binding when the 250 ms read contains
+        // exactly the same vehicle data. Keep the original polling rate.
+        const bool vehicleChanged = !m_hadVehicleSnapshot || o != m_vehicleSnapshot;
+        m_hadVehicleSnapshot = true;
+        m_vehicleSnapshot = o;
         auto i = [&o](const char *k) { return o.contains(QLatin1String(k)) ? int(std::lround(o.value(QLatin1String(k)).toDouble())) : -1; };
         auto d = [&o](const char *k) { return o.contains(QLatin1String(k)) ? o.value(QLatin1String(k)).toDouble() : -1.0; };
         const QString st = o.value(QLatin1String("state")).toString();
@@ -178,8 +185,10 @@ private:
         m_speed = i("speed"); m_rpm = i("rpm"); m_coolant = i("coolant"); m_oil = i("oil");
         m_boost = d("boost"); m_voltage = d("voltage"); m_consumption = d("consumption"); m_fuelRate = d("fuelRate");
         m_engine = o.value(QLatin1String("engineRunning")).toBool();
-        emit changed();
-        // Lightweight state-only read: diagnostic work runs on Kotlin IO dispatcher.
+        if (vehicleChanged) emit changed();
+        // Diagnostic report rarely changes: poll at most once per second while
+        // idle, or at 250 ms while a manually started diagnostic is running.
+        if (!m_mercedesBusy && (++m_diagnosticPollCounter % 4) != 1) return;
         const QString diagnostic = QJniObject::callStaticObjectMethod(kCar, "mercedesCheckStatus", "()Ljava/lang/String;").toString();
         if (!env.checkAndClearExceptions()) {
             const QJsonObject report = QJsonDocument::fromJson(diagnostic.toUtf8()).object();
@@ -201,6 +210,9 @@ private:
     int m_speed = -1, m_rpm = -1, m_coolant = -1, m_oil = -1;
     QVariantList m_adapters;
     bool m_mercedesBusy = false;
+    int m_diagnosticPollCounter = 0;
+    bool m_hadVehicleSnapshot = false;
+    QJsonObject m_vehicleSnapshot;
     QString m_mercedesReport, m_mercedesExport;
 };
 
