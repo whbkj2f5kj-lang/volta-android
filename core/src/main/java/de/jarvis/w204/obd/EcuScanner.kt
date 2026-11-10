@@ -94,16 +94,23 @@ class SafeElm internal constructor(private val exchange: (String, Long) -> Strin
 
     private fun selectRoute(tx: String, rx: Int?) {
         if (header != tx || responseId != rx || !verifySource) {
-            // Never trust ATCRA alone: clones can acknowledge filters but ignore them.
+            // Fail closed during any reconfiguration, including a half-completed one.
+            verifySource = false
             check(send("ATH1").trim().equals("OK", true)) { "Adapter liefert keine prüfbaren Antwortadressen" }
+            headersOn = true
             check(send("ATSH$tx").trim().equals("OK", true)) { "Adapter lehnt Zieladresse $tx ab" }
             val filter = if (rx == null) "ATCRA" else "ATCRA%03X".format(rx)
-            check(send(filter).trim().equals("OK", true)) { "Adapter lehnt Empfangsfilter $filter ab" }
+            if (rx == null) {
+                // Old ELM clones may reject clearing an ATCRA filter; standard
+                // broadcast still verifies every returned source ID explicitly.
+                runCatching { send(filter) }
+            } else {
+                check(send(filter).trim().equals("OK", true)) { "Adapter lehnt Empfangsfilter $filter ab" }
+            }
             header = tx
             responseId = rx
         }
         verifySource = true
-        headersOn = true
     }
 
     fun request(cmd: String, timeoutMs: Long = 1500): String {
