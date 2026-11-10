@@ -24,7 +24,7 @@ Item {
   onLoadProgressChanged:surface.bridge.loadProgress=loadProgress
   onLoadingChanged:function(request){
    surface.bridge.portError=request.status===WebView.LoadFailedStatus?request.errorString:""
-   surface.bridge.loading=request.status===WebView.LoadStartedStatus
+   surface.bridge.portLoading=request.status===WebView.LoadStartedStatus
    surface.bridge.canGoBack=canGoBack;surface.bridge.canGoForward=canGoForward
    surface.bridge.loadingChanged({status:request.status,errorString:request.errorString,url:request.url})
    if(request.status===WebView.LoadSucceededStatus){

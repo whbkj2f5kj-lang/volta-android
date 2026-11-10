@@ -183,6 +183,11 @@ jobs:
           shot vorschau_volta_karte_1280 1280 720 40000 VOLTA_PORT_SPLIT=1
           shot vorschau_volta_drawer 1920 720 20000 VOLTA_PORT_FAKEAPPS=1 VOLTA_PORT_GRID=1
           shot vorschau_volta_apps_einstellungen 1920 720 20000 VOLTA_PORT_FAKEAPPS=1 VOLTA_OPEN=settings:App
+          test -s out/vorschau_volta_setup.png
+          if grep -q 'QQmlApplicationEngine failed to load component' out/*.log; then
+            cat out/*.log
+            exit 1
+          fi
           ls -la out
       - name: Veröffentlichen
         if: always()

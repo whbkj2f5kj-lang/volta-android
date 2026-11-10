@@ -673,4 +673,11 @@ patch("qml/WebApps.qml", [
     (r'"http://127\.0\.0\.1:9098/webapp-icon\?url=" \+ encodeURIComponent\(String\(u\)\)', 'wa.favicon(u)', 1),
 ])
 
+
+
+# QML cannot declare both property loading and signal loadingChanged(info).
+# Keep the WebEngine event name and use portLoading for the two toolbar bindings.
+patch("qml/BrowserApp.qml", [(r'webContent\.loading', 'webContent.portLoading', 4)])
+patch("qml/WebAppView.qml", [(r'web\.loading', 'web.portLoading', 4)])
+
 print("port.py: ok")

@@ -7,7 +7,7 @@ Item {
     enum LoadStatus { LoadStartedStatus, LoadStoppedStatus, LoadSucceededStatus, LoadFailedStatus }
     enum Feature { Geolocation, MediaAudioCapture, MediaVideoCapture, MediaAudioVideoCapture, DesktopVideoCapture, DesktopAudioVideoCapture, Notifications }
     property bool portVisible: visible
-    property bool loading: false
+    property bool portLoading: false
     property string portError: ""
     property url url
     property color backgroundColor: "#000000"
