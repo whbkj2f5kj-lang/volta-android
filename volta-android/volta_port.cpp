@@ -2,6 +2,7 @@
 // aus dem APK in den App-Speicher und zeigt mit VOLTA_DIR darauf. GPL-3.0-or-later
 #include <QCoreApplication>
 #include <QDir>
+#include <QHash>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
@@ -385,6 +386,46 @@ static void voltaPortPrepare()
         QFile f(stampFile);
         if (f.open(QIODevice::WriteOnly)) f.write(VOLTA_PORT_STAMP);
         qInfo().noquote() << "[port] files unpacked:" << n << "->" << dst;
+    }
+    // API-Schluessel uebernehmen: keys.env in Android/data/de.jarvis.volta/files/ (derselbe Ordner wie die Logs)
+    // wird in Voltas keys.env eingetragen und danach geloescht, damit sie nicht offen herumliegt.
+    {
+        QString ext;
+        const QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+        if (ctx.isValid()) {
+            const QJniObject f = ctx.callObjectMethod("getExternalFilesDir", "(Ljava/lang/String;)Ljava/io/File;", nullptr);
+            if (f.isValid()) ext = f.callObjectMethod("getAbsolutePath", "()Ljava/lang/String;").toString();
+        }
+        QFile in(ext + QStringLiteral("/keys.env"));
+        if (!ext.isEmpty() && in.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QStringList order;
+            QHash<QString, QString> vals;
+            auto readInto = [&](QIODevice &dev) {
+                while (!dev.atEnd()) {
+                    const QString line = QString::fromUtf8(dev.readLine()).trimmed();
+                    const int eq = line.indexOf(QLatin1Char('='));
+                    if (line.startsWith(QLatin1Char('#')) || eq <= 0) continue;
+                    const QString k = line.left(eq).trimmed(), v = line.mid(eq + 1).trimmed();
+                    if (v.isEmpty()) continue;
+                    if (!vals.contains(k)) order << k;
+                    vals[k] = v;
+                }
+            };
+            QFile cur(dst + QStringLiteral("/keys.env"));
+            if (cur.open(QIODevice::ReadOnly | QIODevice::Text)) { readInto(cur); cur.close(); }
+            const int before = vals.size();
+            readInto(in);
+            in.close();
+            QFile out(dst + QStringLiteral("/keys.env"));
+            if (out.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                for (const QString &k : order) out.write((k + QLatin1Char('=') + vals.value(k) + QLatin1Char('\n')).toUtf8());
+                out.close();
+                QFile::setPermissions(out.fileName(), QFile::ReadOwner | QFile::WriteOwner);
+                QFile::remove(in.fileName());
+                qInfo().noquote() << "[keys] imported keys.env:" << order.join(QStringLiteral(", "))
+                                  << QStringLiteral("(%1 new)").arg(vals.size() - before);
+            }
+        }
     }
     qputenv("VOLTA_DIR", dst.toUtf8());
 #endif
