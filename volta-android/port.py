@@ -324,7 +324,7 @@ patch("qml/Settings.qml", [
 patch("qml/Settings.qml", [
     (r'"Arcade", qsTr\("System"\)\]', '"Arcade", qsTr("System"), qsTr("Vehicle")]', 1),
     (r'"bluetooth", "apps", "directions_car", "sports_esports", "settings"\]',
-     '"bluetooth", "apps", "directions_car", "sports_esports", "settings", "car"]', 1),
+     '"bluetooth", "apps", "directions_car", "sports_esports", "settings", "speed"]', 1),
     (r'^(\s*)// ══════ PAGINA: SISTEMA ══════\n',
      r'\1// ══════ PAGINA: VEHICLE (Android-Port: OBD, nur lesend) ══════\n'
      r'\1Column {\n'
@@ -520,6 +520,18 @@ patch("qml/CarScene.qml", [
     (r'^        visible: root\.userCarActive && !root\.replacing && !root\.fsdMode && !CarModels\.configured$',
      '        onFailed: { root._carErr = userCarMain.loadError; root.replacing = true }\n'
      '        visible: root.userCarActive && !root.replacing && !root.fsdMode && !CarModels.configured', 1),
+])
+
+# Eigenes Symbol fuer die Seite "Vehicle" (Tacho). Volta buendelt nur die Symbole seiner
+# Einstellungsseiten; ms_car.svg gab es nicht, darum blieb das Feld leer.
+(root / "assets/icons/ms_speed.svg").write_text(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 -960 960 960">'
+    '<path d="M120-400a360 360 0 0 1 720 0h-70a290 290 0 0 0-580 0z'
+    'M455-415 640-615l50 50-185 200z'
+    'M480-330a70 70 0 1 0 0-140a70 70 0 1 0 0 140z'
+    'M120-240h720v60H120z"/></svg>', encoding="utf-8")
+patch("CMakeLists.txt", [
+    (r'^(\s*)assets/icons/ms_directions_car\.svg\n', r'\1assets/icons/ms_directions_car.svg\n\1assets/icons/ms_speed.svg\n', 1),
 ])
 
 # ── Stufe 2: OSM-Daten in Voltas vorhandenem Schild und vorhandenen Karten ────

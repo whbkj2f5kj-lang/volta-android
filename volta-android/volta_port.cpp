@@ -24,6 +24,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cstring>
+#include <unwind.h>
+#include <dlfcn.h>
 #endif
 
 #ifndef VOLTA_PORT_STAMP
@@ -140,6 +142,53 @@ static void voltaLogHandler(QtMsgType type, const QMessageLogContext &ctx, const
 }
 
 static struct sigaction g_oldSig[32];
+// Aufrufkette beim Absturz: Bibliothek + Versatz je Ebene, damit man sieht, WO es knallt
+// (Grafik, Kamera, 3D, Karte ...). Nur write(), keine Speicheranforderung.
+static void voltaCrashHex(uintptr_t v)
+{
+    char b[2 + 16]; int n = 0; b[n++] = '0'; b[n++] = 'x';
+    bool on = false;
+    for (int i = 15; i >= 0; --i) {
+        const int d = int((v >> (i * 4)) & 0xF);
+        if (d || on || i == 0) { on = true; b[n++] = char(d < 10 ? '0' + d : 'a' + d - 10); }
+    }
+    (void)::write(g_logFd, b, size_t(n));
+}
+struct VoltaTrace { int n; };
+static _Unwind_Reason_Code voltaCrashFrame(struct _Unwind_Context *ctx, void *arg)
+{
+    auto *t = static_cast<VoltaTrace *>(arg);
+    const uintptr_t pc = _Unwind_GetIP(ctx);
+    if (!pc || t->n >= 24) return _URC_END_OF_STACK;
+    ++t->n;
+    Dl_info info;
+    std::memset(&info, 0, sizeof(info));
+    static const char pre[] = "[port]   at ";
+    (void)::write(g_logFd, pre, sizeof(pre) - 1);
+    if (dladdr(reinterpret_cast<void *>(pc), &info) && info.dli_fname) {
+        const char *base = std::strrchr(info.dli_fname, '/');
+        base = base ? base + 1 : info.dli_fname;
+        (void)::write(g_logFd, base, std::strlen(base));
+        (void)::write(g_logFd, " +", 2);
+        voltaCrashHex(pc - reinterpret_cast<uintptr_t>(info.dli_fbase));
+        if (info.dli_sname) {
+            (void)::write(g_logFd, " ", 1);
+            (void)::write(g_logFd, info.dli_sname, std::strlen(info.dli_sname) > 120 ? 120 : std::strlen(info.dli_sname));
+        }
+    } else {
+        voltaCrashHex(pc);
+    }
+    (void)::write(g_logFd, "\n", 1);
+    return _URC_NO_REASON;
+}
+static void voltaCrashTrace()
+{
+    static const char h[] = "[port] call chain at the crash:\n";
+    (void)::write(g_logFd, h, sizeof(h) - 1);
+    VoltaTrace t{0};
+    _Unwind_Backtrace(voltaCrashFrame, &t);
+}
+
 static void voltaCrashSig(int sig)
 {
     // nur write(): im Signal-Handler ist sonst nichts erlaubt
@@ -150,6 +199,7 @@ static void voltaCrashSig(int sig)
         (void)::write(g_logFd, num, 3);
         static const char b[] = "[port] (11 = memory access, 6 = abort, 7 = bus error, 4 = illegal instruction, 8 = arithmetic)\n";
         (void)::write(g_logFd, b, sizeof(b) - 1);
+        voltaCrashTrace();
         ::fsync(g_logFd);
     }
     if (sig > 0 && sig < 32) sigaction(sig, &g_oldSig[sig], nullptr);   // Android schreibt danach seinen eigenen Absturzbericht
