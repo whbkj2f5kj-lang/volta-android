@@ -255,6 +255,25 @@ static void voltaLogOpen()
         }
     });
     QObject::connect(qApp, &QCoreApplication::aboutToQuit, []() { qInfo() << "[port] app is closing normally"; });
+    // Speicher: alle 15 s Verbrauch der App und freier Speicher des Geraets (MB).
+    // Steigt "app" stetig oder faellt "free" gegen null, ist der Speicher die Ursache.
+    auto *memTimer = new QTimer(qApp);
+    memTimer->setInterval(15000);
+    QObject::connect(memTimer, &QTimer::timeout, []() {
+        auto field = [](const char *path, const QByteArray &key) -> long {
+            QFile f(QString::fromLatin1(path));
+            if (!f.open(QIODevice::ReadOnly)) return -1;
+            for (const QByteArray &line : f.readAll().split('\n'))
+                if (line.startsWith(key)) return line.mid(key.size()).trimmed().split(' ').value(0).toLong() / 1024;
+            return -1;
+        };
+        static long peak = 0;
+        const long rss = field("/proc/self/status", "VmRSS:");
+        if (rss > peak) peak = rss;
+        qInfo().noquote() << QStringLiteral("[mem] app %1 MB (peak %2) | device free %3 MB of %4 MB")
+            .arg(rss).arg(peak).arg(field("/proc/meminfo", "MemAvailable:")).arg(field("/proc/meminfo", "MemTotal:"));
+    });
+    memTimer->start();
 }
 #endif
 
