@@ -17,7 +17,10 @@ import java.io.FileWriter;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
+import android.content.SharedPreferences;
+import org.json.JSONObject;
 
 /**
  * Hoert mit, was die CAN-Box des Radios (App com.qf.vehicle) ueber das Auto meldet.
@@ -42,6 +45,9 @@ public final class CanListener {
         if (started) return;
         started = true;
         final Context app = ctx.getApplicationContext();
+        prefs = app.getSharedPreferences("volta_can", Context.MODE_PRIVATE);
+        seen.addAll(prefs.getStringSet("seen", new HashSet<String>()));
+        doorSwap = prefs.getBoolean("doorSwap", false);
         File dir = app.getExternalFilesDir(null);
         file = new File(dir != null ? dir : app.getFilesDir(), "volta_can_log.txt");
         if (file.length() > 3L * 1024 * 1024) {
@@ -123,6 +129,8 @@ public final class CanListener {
         app.registerReceiver(new BroadcastReceiver() {
             @Override public void onReceive(Context c, Intent i) {
                 String a = i.getAction() == null ? "?" : i.getAction().replace("com.qf.vehicle.action.", "v.").replace("com.qf.action.", "q.");
+                if ("com.qf.action.BACKCAR_START".equals(i.getAction())) put("reverseCam", 1);
+                if ("com.qf.action.BACKCAR_STOP".equals(i.getAction())) put("reverseCam", 0);
                 Bundle ex = i.getExtras();
                 if (ex == null) { log("Broadcast " + a); return; }
                 for (String k : ex.keySet()) {
@@ -145,7 +153,7 @@ public final class CanListener {
             try {
                 data.enforceInterface(CALLBACK);
                 if (code == 1) frame(name + " roh", data.createByteArray());
-                else if (code == 2) frame(name + " gepackt", data.createByteArray());
+                else if (code == 2) { byte[] b = data.createByteArray(); frame(name + " gepackt", b); parse(b); }
                 if (reply != null) reply.writeNoException();
             } catch (Throwable t) { log(name + " Fehler: " + t); }
             return true;
@@ -158,6 +166,7 @@ public final class CanListener {
         ServiceConnection conn = new ServiceConnection() {
             @Override public void onServiceConnected(ComponentName n, IBinder b) {
                 log("CAN-Dienst verbunden: " + n.flattenToShortString());
+                bound = true;
                 register(b, ADD_RAW, "CAN");
                 register(b, ADD_CARBODY, "Fahrzeug");
                 register(b, ADD_DOOR, "Tueren");
@@ -167,7 +176,7 @@ public final class CanListener {
                 register(b, ADD_ORIGINAL_STATE, "Original");
                 register(b, ADD_TURN, "Blinker");
             }
-            @Override public void onServiceDisconnected(ComponentName n) { log("CAN-Dienst getrennt"); }
+            @Override public void onServiceDisconnected(ComponentName n) { log("CAN-Dienst getrennt"); bound = false; }
         };
         try {
             boolean ok = app.bindService(i, conn, Context.BIND_AUTO_CREATE);
@@ -186,5 +195,114 @@ public final class CanListener {
         } catch (Throwable t) {
             log("Anmeldung " + name + " fehlgeschlagen: " + t);
         } finally { data.recycle(); reply.recycle(); }
+    }
+
+    // ── Auswertung der gepackten Pakete (Format QfSdkDataPack aus com.qf.vehicle) ──
+    // Kopf: 98 <Typ> <Laenge>, danach die Daten, am Ende ein Pruefbyte.
+    private static SharedPreferences prefs;
+    private static volatile boolean bound = false, doorSwap = false;
+    private static volatile long lastPacket = 0;
+    private static final HashMap<String, Double> vals = new HashMap<>();
+    private static final HashSet<String> seen = new HashSet<>();
+
+    private static void put(String k, double v) {
+        synchronized (vals) {
+            vals.put(k, v);
+            if (v != 0 && seen.add(k) && prefs != null) prefs.edit().putStringSet("seen", new HashSet<>(seen)).apply();
+        }
+    }
+    private static int u(byte[] p, int i) { return i < p.length ? p[i] & 0xff : 0; }
+    private static int bit(byte[] p, int i, int b) { return (u(p, i) >> b) & 1; }
+    private static int u16(byte[] p, int i) { return (u(p, i) << 8) | u(p, i + 1); }
+
+    private static void parse(byte[] p) {
+        if (p == null || p.length < 4 || u(p, 0) != 0x98) return;
+        int type = u(p, 1), n = u(p, 2), d = 3;
+        if (p.length < d + n) return;
+        lastPacket = android.os.SystemClock.elapsedRealtime();
+        switch (type) {
+            case 0x02: { // Fahrzeug
+                put("highBeam", bit(p, d, 7)); put("lowBeam", bit(p, d, 6)); put("fogFront", bit(p, d, 5)); put("fogRear", bit(p, d, 4));
+                put("turnRight", bit(p, d, 3)); put("turnLeft", bit(p, d, 2)); put("hazard", bit(p, d, 1)); put("mainLights", bit(p, d, 0));
+                put("parkLights", bit(p, d + 1, 7)); put("widthLights", bit(p, d + 1, 6)); put("reverseLight", bit(p, d + 1, 5));
+                put("brakeLight", bit(p, d + 1, 4)); put("warnLight", bit(p, d + 1, 3)); put("espLamp", bit(p, d + 1, 1));
+                put("centralLock", bit(p, d + 2, 7)); put("lockFL", bit(p, d + 2, 6)); put("lockFR", bit(p, d + 2, 5));
+                put("lockRL", bit(p, d + 2, 4)); put("lockRR", bit(p, d + 2, 3)); put("lockTrunk", bit(p, d + 2, 2));
+                put("windowFL", bit(p, d + 2, 1)); put("windowFR", bit(p, d + 2, 0));
+                put("windowRL", bit(p, d + 3, 7)); put("windowRR", bit(p, d + 3, 6)); put("sunroof", bit(p, d + 3, 5));
+                put("beltDriver", bit(p, d + 3, 3)); put("beltPassenger", bit(p, d + 3, 2)); put("beltRearL", bit(p, d + 3, 1)); put("beltRearR", bit(p, d + 3, 0));
+                put("ignition", bit(p, d + 4, 7)); put("clutch", bit(p, d + 4, 6)); put("reverseGear", bit(p, d + 4, 5)); put("handbrake", bit(p, d + 4, 4));
+                put("washerLow", bit(p, d + 4, 3)); put("wiper", bit(p, d + 4, 2));
+                int speed = u16(p, d + 5);
+                if (speed <= 300) put("speed", speed);
+                put("rpm", u16(p, d + 7));
+                put("fuel", u16(p, d + 9));
+                put("rest", u16(p, d + 11));
+                put("odometerRaw", (u(p, d + 13) << 16) | u16(p, d + 14));
+                put("range", u16(p, d + 16));
+                put("trip1", u16(p, d + 18)); put("trip2", u16(p, d + 20)); put("trip3", u16(p, d + 22));
+                put("consumptionNow", u16(p, d + 49));
+                put("avgSpeed1", u16(p, d + 51));
+                put("driveTime1", u16(p, d + 57));
+                put("consumptionAvg1", u16(p, d + 63));
+                break;
+            }
+            case 0x03: { // Tueren
+                int fl = bit(p, d, 7), fr = bit(p, d, 6), rl = bit(p, d, 5), rr = bit(p, d, 4);
+                if (doorSwap) { int t = fl; fl = fr; fr = t; t = rl; rl = rr; rr = t; }
+                put("doorFL", fl); put("doorFR", fr); put("doorRL", rl); put("doorRR", rr);
+                put("trunk", bit(p, d, 3)); put("hood", bit(p, d, 2));
+                break;
+            }
+            case 0x01: { // Klima
+                put("acPower", bit(p, d, 7)); put("acCompressor", bit(p, d, 6)); put("acAuto", bit(p, d, 2) | bit(p, d, 5));
+                put("acRecirc", bit(p, d, 4)); put("acDual", bit(p, d, 0));
+                put("defrostFront", bit(p, d + 1, 7)); put("defrostRear", bit(p, d + 1, 6));
+                put("airUp", bit(p, d + 2, 7)); put("airMid", bit(p, d + 2, 6)); put("airDown", bit(p, d + 2, 5));
+                put("fan", u(p, d + 2) & 0x0f);
+                put("tempLeftRaw", u(p, d + 5)); put("tempRightRaw", u(p, d + 6));
+                put("seatHeatL", u(p, d + 8) >> 4); put("seatHeatR", u(p, d + 8) & 0x0f);
+                break;
+            }
+            case 0x04: { // Einparkhilfe: 6 vorne, 6 hinten (Stufen)
+                int front = 0, rear = 0;
+                for (int i = 0; i < 6; i++) { put("radarF" + i, u(p, d + i)); front = Math.max(front, u(p, d + i)); }
+                for (int i = 0; i < 6; i++) { put("radarR" + i, u(p, d + 6 + i)); rear = Math.max(rear, u(p, d + 6 + i)); }
+                put("radarFront", front); put("radarRear", rear);
+                break;
+            }
+            default: break;
+        }
+    }
+
+    public static void setDoorSwap(Context ctx, boolean on) {
+        doorSwap = on;
+        ctx.getApplicationContext().getSharedPreferences("volta_can", Context.MODE_PRIVATE).edit().putBoolean("doorSwap", on).apply();
+    }
+
+    private static String prop(String k) {
+        try {
+            Class<?> sp = Class.forName("android.os.SystemProperties");
+            return String.valueOf(sp.getMethod("get", String.class).invoke(null, k));
+        } catch (Throwable t) { return ""; }
+    }
+
+    /** Aktueller Stand fuer Volta (JSON): values, seen (welche Felder das Auto schon geliefert hat). */
+    public static String snapshot() {
+        try {
+            JSONObject o = new JSONObject(), v = new JSONObject(), s = new JSONObject();
+            synchronized (vals) {
+                for (java.util.Map.Entry<String, Double> e : vals.entrySet()) v.put(e.getKey(), e.getValue());
+                for (String k : seen) s.put(k, true);
+            }
+            String rev = prop("sys.qf.backcar_state"), head = prop("sys.qf.vehicle.headlight_state");
+            v.put("reverseProp", "1".equals(rev) || "true".equalsIgnoreCase(rev) ? 1 : 0);
+            v.put("headlightProp", "1".equals(head) || "true".equalsIgnoreCase(head) ? 1 : 0);
+            o.put("bound", bound);
+            o.put("doorSwap", doorSwap);
+            o.put("values", v);
+            o.put("seen", s);
+            return o.toString();
+        } catch (Throwable t) { return "{}"; }
     }
 }

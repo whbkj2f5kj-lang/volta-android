@@ -55,6 +55,7 @@ target_sources(VoltaOS PRIVATE
     ${VOLTA_PORT_DIR}/android_limits.cpp
     ${VOLTA_PORT_DIR}/android_tpms.cpp
     ${VOLTA_PORT_DIR}/android_update.cpp
+    ${VOLTA_PORT_DIR}/android_can.cpp
     ${VOLTA_PORT_DIR}/volta_mapproxy.cpp
     ${VOLTA_PORT_DIR}/shim/volta_webshim.h)
 target_include_directories(VoltaOS BEFORE PRIVATE
@@ -217,27 +218,34 @@ patch("qml/CarPanel.qml", [
      r'\1property real portKmh: 0\n'
      r'\1property real portObdKmh: 0\n'
      r'\1// OBD verbunden: nur OBD-Tempo (kurze Luecken mit letztem Wert ueberbruecken, nie GPS dazwischen)\n'
-     r'\1readonly property real portShownKmh: VoltaCar.live ? (VoltaCar.speed >= 0 ? VoltaCar.speed : portObdKmh) : portKmh\n'
+     r'\1// Reihenfolge: OBD-Adapter, sonst Radio-CAN, sonst GPS\n'
+     r'\1readonly property real portShownKmh: VoltaCar.live ? (VoltaCar.speed >= 0 ? VoltaCar.speed : portObdKmh) : (VoltaCan.hasSpeed ? VoltaCan.speed : portKmh)\n'
+     r'\1gear: VoltaCan.reverse ? "R" : (portShownKmh > 3 ? "D" : "")\n'
+     r'\1highBeamOn: VoltaCan.connected && VoltaCan.values.highBeam > 0\n'
+     r'\1turnLeft: VoltaCan.connected && (VoltaCan.values.turnLeft > 0 || VoltaCan.values.hazard > 0)\n'
+     r'\1turnRight: VoltaCan.connected && (VoltaCan.values.turnRight > 0 || VoltaCan.values.hazard > 0)\n'
      r'\1onPortShownKmhChanged: if (VoltaCar.live && VoltaCar.speed >= 0) portObdKmh = VoltaCar.speed\n'
      r'\1speedValue: Math.round(portShownKmh).toString()\n'
      r'\1speedUnit:  "km/h"\n'
-     r'\1headlightOn: false\n'
-     r'\1seatbeltOn:  false\n'
+     r'\1headlightOn: VoltaCan.connected && (VoltaCan.seen.lowBeam === true ? VoltaCan.values.lowBeam > 0 : VoltaCan.values.headlightProp > 0)\n'
+     r'\1seatbeltOn:  VoltaCan.connected && VoltaCan.seen.beltDriver === true && VoltaCan.values.beltDriver > 0\n'
      r'\1Connections {\n'
      r'\1    target: Gps\n'
      r'\1    function onUpdated(d) { var fresh = d.speedValid !== false && (d.ageMs || 0) < 3000; var k = fresh ? (d.speed || 0) * 3.6 : 0; if (d.accuracyValid && d.accuracy > 25) k = 0; if (speedCluster.portKmh < 1 ? k < 6 : k < 3) k = 0; speedCluster.portKmh = k; if (fresh) portSpeedStale.restart(); else portSpeedStale.stop() }\n'
      r'\1}\n'
      r'\1Timer { id: portSpeedStale; interval: 3000; onTriggered: speedCluster.portKmh = 0 }\n'
      r'\1Column {\n'
-     r'\1    visible: VoltaCar.live\n'
+     r'\1    visible: VoltaCar.live || (VoltaCan.connected && (VoltaCan.seen.rpm === true || VoltaCan.seen.range === true))\n'
      r'\1    x: carPanel.rhd ? speedCluster.width - width : 0\n'
      r'\1    y: speedCluster.implicitHeight + 6\n'
      r'\1    spacing: 10\n'
      r'\1    Repeater {\n'
      r'\1        // feste Liste (nicht bei jedem Wert neu aufbauen); fehlende Werte blenden sich aus\n'
-     r'\1        model: ["rpm", "coolant", "oil", "boost", "voltage", "consumption"]\n'
+     r'\1        model: ["rpm", "coolant", "oil", "boost", "voltage", "consumption", "range"]\n'
      r'\1        Column {\n'
-     r'\1            readonly property real val: VoltaCar[modelData]\n'
+     r'\1            // OBD hat Vorrang; ohne OBD Drehzahl und Reichweite vom Radio-CAN\n'
+     r'\1            readonly property real val: (VoltaCar.live && VoltaCar[modelData] !== undefined) ? VoltaCar[modelData]\n'
+     r'\1                : ((modelData === "rpm" || modelData === "range") && VoltaCan.connected && VoltaCan.seen[modelData] === true ? VoltaCan.values[modelData] : -1)\n'
      r'\1            readonly property bool warn: (modelData === "rpm" && val > 4200) || (modelData === "coolant" && val >= 108)\n'
      r'\1                                         || (modelData === "oil" && val >= 125) || (modelData === "voltage" && val >= 0 && val < 11.8)\n'
      r'\1            readonly property bool cold: (modelData === "coolant" || modelData === "oil") && val >= 0 && val < 60\n'
@@ -249,7 +257,7 @@ patch("qml/CarPanel.qml", [
      r'\1                font.pixelSize: 26; font.weight: Font.Light\n'
      r'\1            }\n'
      r'\1            Text {\n'
-     r'\1                text: ({ rpm: "RPM", coolant: "COOLANT °C", oil: "OIL °C", boost: "BOOST BAR", voltage: "BATTERY V", consumption: "L/100 KM" })[modelData]\n'
+     r'\1                text: ({ rpm: "RPM", coolant: "COOLANT °C", oil: "OIL °C", boost: "BOOST BAR", voltage: "BATTERY V", consumption: "L/100 KM", range: "RANGE KM" })[modelData]\n'
      r'\1                color: "#757575"; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 1\n'
      r'\1            }\n'
      r'\1        }\n'
@@ -260,7 +268,7 @@ patch("qml/CarPanel.qml", [
 ])
 patch("qml/SpeedCluster.qml", [
     (r'^(\s*)Row \{\n(\s*)x: cluster\.rhd \? col\.width - width : 0\n(\s*)spacing: 7\n',
-     r'\1Row {\n\2visible: false   // Android-Port: Gang ist nicht bekannt\n\2x: cluster.rhd ? col.width - width : 0\n\3spacing: 7\n', 1),
+     r'\1Row {\n\2visible: cluster.gear !== ""   // Android-Port: R vom Radio-CAN, D wenn das Auto vorwaerts faehrt\n\2x: cluster.rhd ? col.width - width : 0\n\3spacing: 7\n', 1),
 ])
 patch("qml/StatusBar.qml", [
     (r'property bool   showAirbag: true', 'property bool   showAirbag: false   // Android-Port: kein Signal vom Auto', 1),
@@ -887,4 +895,130 @@ patch("qml/Main.qml", [
     Connections {
         target: VoltaLimits
 ''', 1),
+])
+
+# ── Radio-CAN (com.qf.vehicle, nur lesen): Blinker, Tueren am 3D-Auto, Schloss, Einparkhilfe, Fahrzeugseite, Warnungen ──
+patch("qml/SpeedCluster.qml", [
+    (r'^    property bool seatbeltOn:  true\n',
+     '    property bool seatbeltOn:  true\n    property bool turnLeft: false\n    property bool turnRight: false\n', 1),
+    (r'^            // faro anabbagliante \(verde\)\n',
+     '            // Blinker (Radio-CAN)\n'
+     '            Row {\n'
+     '                spacing: 6\n'
+     '                visible: cluster.turnLeft || cluster.turnRight\n'
+     '                Text { text: "◀"; color: cluster.turnLeft ? "#2ECC71" : "#414141"; font.pixelSize: 22 }\n'
+     '                Text { text: "▶"; color: cluster.turnRight ? "#2ECC71" : "#414141"; font.pixelSize: 22 }\n'
+     '            }\n'
+     '            // faro anabbagliante (verde)\n', 1),
+])
+patch("qml/StatusBar.qml", [
+    IMP,
+    (r'property bool   locked: true ', 'property bool   locked: VoltaCan.seen.centralLock === true ? VoltaCan.values.centralLock > 0 : true ', 1),
+])
+CAN_PANEL = r'''\1// Android-Port: Tueren, Kofferraum und Haube folgen dem echten Auto (Radio-CAN).
+\1// Nur bei Aenderung setzen, damit Voltas eigene Oeffnen-Knoepfe weiter funktionieren.
+\1Connections {
+\1    target: VoltaCan
+\1    property string portDoorKey: ""
+\1    function onChanged() {
+\1        if (!VoltaCan.connected || !VoltaCan.hasDoors) return
+\1        var v = VoltaCan.values
+\1        var l = (v.doorFL > 0 || v.doorRL > 0) ? 1 : 0, r = (v.doorFR > 0 || v.doorRR > 0) ? 1 : 0
+\1        var t = v.trunk > 0 ? 1 : 0, h = v.hood > 0 ? 1 : 0
+\1        var key = "" + l + r + t + h
+\1        if (key === portDoorKey) return
+\1        portDoorKey = key
+\1        car3DView.doorLeftOpen = l; car3DView.doorRightOpen = r
+\1        car3DView.trunkOpen = t; car3DView.hoodOpen = h
+\1    }
+\1}
+\1// Einparkhilfe (Radio-CAN): Balken vorne und hinten, nur wenn das Auto Werte liefert
+\1Item {
+\1    id: portRadar
+\1    z: 50
+\1    anchors.fill: parent
+\1    visible: VoltaCan.connected && (VoltaCan.values.radarFront > 0 || VoltaCan.values.radarRear > 0)
+\1    function col(l) { return l <= 0 ? "#33FFFFFF" : l >= 3 ? "#ED4E3B" : l === 2 ? "#F5A623" : "#2ECC71" }
+\1    Row {
+\1        anchors.horizontalCenter: parent.horizontalCenter; y: parent.height * 0.12; spacing: 6
+\1        Repeater { model: 6; Rectangle { width: 34; height: 8; radius: 4; color: portRadar.col(VoltaCan.values["radarF" + index] || 0) } }
+\1    }
+\1    Row {
+\1        anchors.horizontalCenter: parent.horizontalCenter; y: parent.height * 0.86; spacing: 6
+\1        Repeater { model: 6; Rectangle { width: 34; height: 8; radius: 4; color: portRadar.col(VoltaCan.values["radarR" + index] || 0) } }
+\1    }
+\1}
+\1// ════════ VISTA AUTO 3D NATIVA (Qt Quick 3D) ════════
+'''
+patch("qml/CarPanel.qml", [
+    (r'^(\s*)// ════════ VISTA AUTO 3D NATIVA \(Qt Quick 3D\) ════════\n', CAN_PANEL, 1),
+])
+CAN_SETTINGS = r'''\1SectionTitle { title: qsTr("Vehicle data from the radio (CAN)") }
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; color: root.txtSub; font.pixelSize: 13
+\1    text: VoltaCan.connected ? qsTr("Connected to the radio's vehicle service (read only).") : qsTr("Radio vehicle service not connected.")
+\1}
+\1Grid {
+\1    columns: 2; columnSpacing: 24; rowSpacing: 6; width: parent.width
+\1    Repeater {
+\1        model: [
+\1            [qsTr("Speed"), VoltaCan.seen.speed ? VoltaCan.values.speed + " km/h" : "–"],
+\1            [qsTr("Engine speed"), VoltaCan.seen.rpm ? VoltaCan.values.rpm + " rpm" : "–"],
+\1            [qsTr("Gear"), VoltaCan.reverse ? "R" : "–"],
+\1            [qsTr("Odometer"), VoltaCan.seen.odometerRaw ? Math.round(VoltaCan.odometerKm) + " km" : "–"],
+\1            [qsTr("Range"), VoltaCan.seen.range ? VoltaCan.values.range + " km" : "–"],
+\1            [qsTr("Fuel (raw)"), VoltaCan.seen.fuel ? String(VoltaCan.values.fuel) : "–"],
+\1            [qsTr("Trip 1 (raw)"), VoltaCan.seen.trip1 ? String(VoltaCan.values.trip1) : "–"],
+\1            [qsTr("Consumption (raw)"), VoltaCan.seen.consumptionNow ? String(VoltaCan.values.consumptionNow) : "–"],
+\1            [qsTr("Climate"), VoltaCan.values.acPower > 0 ? (VoltaCan.tempLeft + " / " + VoltaCan.tempRight + (VoltaCan.values.acCompressor > 0 ? " · A/C" : "") + (VoltaCan.values.acAuto > 0 ? " · AUTO" : "")) : qsTr("off")],
+\1            [qsTr("Doors"), VoltaCan.hasDoors ? (((VoltaCan.values.doorFL > 0 ? qsTr("front left ") : "") + (VoltaCan.values.doorFR > 0 ? qsTr("front right ") : "")
+\1                + (VoltaCan.values.doorRL > 0 ? qsTr("rear left ") : "") + (VoltaCan.values.doorRR > 0 ? qsTr("rear right ") : "")
+\1                + (VoltaCan.values.trunk > 0 ? qsTr("trunk ") : "") + (VoltaCan.values.hood > 0 ? qsTr("hood") : "")) || qsTr("closed")) : "–"],
+\1            [qsTr("Lights"), (VoltaCan.values.lowBeam > 0 || VoltaCan.values.headlightProp > 0 ? qsTr("on") : qsTr("off")) + (VoltaCan.values.highBeam > 0 ? " · " + qsTr("high beam") : "")],
+\1            [qsTr("Lock"), VoltaCan.seen.centralLock ? (VoltaCan.values.centralLock > 0 ? qsTr("locked") : qsTr("unlocked")) : "–"]
+\1        ]
+\1        Text { text: modelData[0] + ":  " + modelData[1]; color: root.txt; font.pixelSize: 14 }
+\1    }
+\1}
+\1Item {
+\1    width: parent.width; height: 42
+\1    Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: qsTr("Swap left and right doors"); color: root.txt; font.pixelSize: 15 }
+\1    TToggle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; checked: VoltaCan.doorSwap; onToggled: on => VoltaCan.setDoorSwap(on) }
+\1}
+\1TDivider {}
+\1SectionTitle { title: qsTr("Speed limits") }'''
+patch("qml/Settings.qml", [
+    (r'^([ \t]*)SectionTitle \{ title: qsTr\("Speed limits"\) \}', CAN_SETTINGS, 1),
+])
+CAN_MAIN = '''    // Radio-CAN: stille Warnkarten (keine Sprache)
+    Connections {
+        target: VoltaCan
+        property bool portDoorWarned: false
+        property bool portBeltWarned: false
+        property bool portWasherWarned: false
+        property bool portRangeWarned: false
+        function onChanged() {
+            if (!VoltaCan.connected) return
+            var v = VoltaCan.values, moving = v.speed > 10
+            var door = VoltaCan.hasDoors && (v.doorFL > 0 || v.doorFR > 0 || v.doorRL > 0 || v.doorRR > 0 || v.trunk > 0 || v.hood > 0)
+            if (moving && door && !portDoorWarned) { portDoorWarned = true
+                notifStack.notify({ id: "can-door", iconType: "info", iconColor: "#ED4E3B", title: qsTr("Door open"), subtitle: qsTr("A door, the trunk or the hood is open while driving"), autoDismissMs: 8000 }) }
+            if (!door) { portDoorWarned = false; notifStack.dismiss("can-door") }
+            var belt = VoltaCan.seen.beltDriver === true && v.beltDriver > 0
+            if (moving && belt && !portBeltWarned) { portBeltWarned = true
+                notifStack.notify({ id: "can-belt", iconType: "info", iconColor: "#ED4E3B", title: qsTr("Seat belt"), subtitle: qsTr("Driver seat belt not fastened"), autoDismissMs: 8000 }) }
+            if (!belt) portBeltWarned = false
+            if (v.washerLow > 0 && !portWasherWarned) { portWasherWarned = true
+                notifStack.notify({ id: "can-washer", iconType: "info", iconColor: "#F5A623", title: qsTr("Washer fluid low"), autoDismissMs: 8000 }) }
+            var lowRange = VoltaCan.seen.range === true && v.range > 0 && v.range < 50
+            if (lowRange && !portRangeWarned) { portRangeWarned = true
+                notifStack.notify({ id: "can-range", iconType: "info", iconColor: "#F5A623", title: qsTr("Low fuel"), subtitle: qsTr("Range %1 km").arg(v.range), autoDismissMs: 10000 }) }
+            if (VoltaCan.seen.range === true && v.range >= 80) portRangeWarned = false
+        }
+    }
+    Connections {
+        target: VoltaUpdate
+'''
+patch("qml/Main.qml", [
+    (r'^    Connections \{\n        target: VoltaUpdate\n', CAN_MAIN, 1),
 ])
