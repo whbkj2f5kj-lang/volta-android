@@ -1117,3 +1117,15 @@ patch("qml/Settings.qml", [
      r'\3if (idx === 3) { prefs.themeMode = "lights"; root.themeModeSelected("lights", prefs.autoStart, prefs.autoEnd) }\n'
      r'\3else if (idx === 2) { autoPopup.open() }\n', 1),
 ])
+
+# ── Radio: immer im Sparmodus starten (3D-Auto und Effekte ueberfordern die PowerVR-Grafik) ──
+patch("qml/Main.qml", [
+    (r"^        property bool   lowPower: false            // Impostazioni",
+     "        property bool   lowPower: true             // Android-Port: Standard an. Impostazioni", 1),
+    (r'^            Theme\.lowPower = uiPrefs\.lowPower\n',
+     '            if (AndroidPort.android) uiPrefs.lowPower = true   // Android-Port: jeder Start im Sparmodus\n'
+     '            Theme.lowPower = uiPrefs.lowPower\n', 1),
+])
+patch("qml/Settings.qml", [
+    (r'^        property bool   lowPower:   false\n', '        property bool   lowPower:   true\n', 1),
+])
