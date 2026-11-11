@@ -326,6 +326,16 @@ static void voltaPortPrepare()
     voltaPortRegisterTpms();
     voltaPortRegisterUpdate();
     voltaPortRegisterLimits();
+#ifdef Q_OS_ANDROID
+    // CAN-Daten des Radios mitlesen (nur lesen) -> volta_can_log.txt
+    QTimer::singleShot(8000, qApp, []() {
+        QJniEnvironment env;
+        QJniObject::callStaticMethod<void>("de/jarvis/volta/CanListener", "start", "(Landroid/content/Context;)V",
+                                           QNativeInterface::QAndroidApplication::context().object());
+        if (env.checkAndClearExceptions()) qWarning() << "[can] listener could not start";
+        else qInfo() << "[can] listener started (volta_can_log.txt)";
+    });
+#endif
 #ifndef Q_OS_ANDROID
     // auf dem Linux-Testrechner nur auf Wunsch (dort gibt es sonst Voltas Python-Dienst)
     if (qEnvironmentVariableIsSet("VOLTA_PORT_PROXY")) voltaPortStartMapProxy();
