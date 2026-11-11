@@ -44,6 +44,10 @@ public:
     QString road() const { return m_data.value("road").toString(); }
     QString status() const {
         const QString s = m_data.value("status").toString();
+        if (s == "camera") return tr("Camera-confirmed speed limit");
+        if (s == "camera_conditional") return tr("Camera sign has additional conditions; no general limit applied");
+        if (s == "camera_end") return tr("Camera detected an end sign; new limit unknown");
+        if (s == "camera_town") return tr("Camera detected a town sign; numeric limit not inferred");
         if (s == "ready") return tr("Speed limit available");
         if (s == "loading") return tr("Loading OSM road data");
         if (s == "offline") return tr("OSM unavailable; using cached roads where available");

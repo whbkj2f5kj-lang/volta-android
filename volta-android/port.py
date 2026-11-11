@@ -736,12 +736,32 @@ patch("qml/Settings.qml", [
 \1    width: parent.width; height: 46
 \1    Text {
 \1        anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
-\1        text: qsTr("Enable USB dashcam & loop recording"); font.pixelSize: 15; color: root.txt
+\1        text: qsTr("Enable USB camera"); font.pixelSize: 15; color: root.txt
 \1    }
 \1    TToggle {
 \1        anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
 \1        checked: VoltaDashcam.enabled
 \1        onToggled: on => VoltaDashcam.setEnabled(on)
+\1    }
+\1}
+\1Item {
+\1    width: parent.width; height: 42
+\1    Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: qsTr("Loop recording"); color: root.txt; font.pixelSize: 15 }
+\1    TToggle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; checked: VoltaDashcam.recordingEnabled; onToggled: on => VoltaDashcam.setRecordingEnabled(on) }
+\1}
+\1Item {
+\1    width: parent.width; height: 42
+\1    Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: qsTr("Traffic sign recognition"); color: root.txt; font.pixelSize: 15 }
+\1    TToggle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; checked: VoltaDashcam.signsEnabled; onToggled: on => VoltaDashcam.setSignsEnabled(on) }
+\1}
+\1Text { width: parent.width; text: VoltaDashcam.signStatus; color: root.txtHint; wrapMode: Text.WordWrap; font.pixelSize: 12 }
+\1TSecondary {
+\1    label: qsTr("Open camera preview")
+\1    onClicked: if (root.hostWindow) {
+\1        root.hostWindow.activeApp = "camera"
+\1        root.hostWindow.carFullScreen = false
+\1        root.hostWindow.appPanelFull = false
+\1        root.hostWindow.showGrid = false
 \1    }
 \1}
 \1Text {
@@ -758,7 +778,7 @@ patch("qml/Settings.qml", [
 \1}
 \1Text {
 \1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
-\1    text: qsTr("From Jarvis ASD USB UVC driver and H.264 loop recorder. Default OFF. Files: Movies/W204-Dashcam. Preview: Camera page. Disable to release the camera.")
+\1    text: qsTr("Preview: Camera app, Front dashcam tile. Recording and sign recognition work independently. USB camera default OFF. Recordings: Movies/W204-Dashcam.")
 \1}
 \1TDivider {}
 \1SectionTitle { title: qsTr("OBD adapter") }''', 1),
@@ -768,13 +788,16 @@ patch("qml/CameraApp.qml", [
     (r'    property bool active: false', '''    property bool active: false
     function portHideUsbPreview() { VoltaDashcam.preview(false,0,0,0,0,1,1) }
     onActiveChanged: if (!active) portHideUsbPreview()
+    onVisibleChanged: if (!visible) portHideUsbPreview()
+    Component.onDestruction: portHideUsbPreview()
     Connections {
         target: VoltaDashcam
         function onChanged() { if (!VoltaDashcam.enabled) cam.portHideUsbPreview() }
     }
     Timer {
-        interval: 500; repeat: true; triggeredOnStart: true
-        running: cam.active && VoltaDashcam.enabled
+        interval: 100; repeat: true; triggeredOnStart: true
+        running: cam.active && cam.visible && Qt.application.state === Qt.ApplicationActive && VoltaDashcam.enabled && (!cam.Window.window || !cam.Window.window.showGrid)
+        onRunningChanged: if (!running) cam.portHideUsbPreview()
         onTriggered: {
             var w = cam.Window.window
             if (!w) return
@@ -782,7 +805,7 @@ patch("qml/CameraApp.qml", [
             VoltaDashcam.preview(true,p.x,p.y,mainCam.width,mainCam.height,w.width,w.height)
         }
     }''', 1),
-    (r'        label: qsTr\("Rear"\)', '        label: qsTr("Front dashcam")', 1),
+    (r'        label: qsTr\("Rear"\)', '        label: qsTr("Front dashcam") + " · " + VoltaDashcam.status', 1),
 ])
 
 print("port.py: ok")

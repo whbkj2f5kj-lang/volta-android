@@ -5,6 +5,8 @@ import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import de.jarvis.w204.map.*
+import de.jarvis.w204.vision.CameraLimitPolicy
+import de.jarvis.w204.vision.SignEvent
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import org.json.JSONObject
@@ -18,6 +20,13 @@ import java.util.Calendar
 import java.util.concurrent.ConcurrentHashMap
 
 object VoltaLimits {
+    private val camera = CameraLimitPolicy()
+    fun cameraFrame(now: Long) = camera.frame(now)
+    fun clearCamera() = camera.reset()
+    fun cameraRoad(): Long? = service?.currentRoad()
+    fun cameraEvent(event: SignEvent, now: Long, road: Long?) = camera.accept(event, now, road)
+    fun cameraChoice(now: Long, road: Long?) = camera.current(now, road)
+
     @Volatile private var service: RoadLimitService? = null
     private fun service(ctx: Context): RoadLimitService = service ?: synchronized(this) {
         service ?: RoadLimitService(ctx.applicationContext).also { service = it }
@@ -105,6 +114,10 @@ private class RoadLimitService(ctx: Context) {
         positions.trySend(p)
     }
 
+    fun currentRoad(): Long? = decision.takeIf {
+        latest?.fresh(SystemClock.elapsedRealtime()) == true && SystemClock.elapsedRealtime() - it.atMs in 0..3000
+    }?.wayId
+
     /** JNI ruft nur diesen kleinen, nicht-blockierenden Snapshot ab. */
     fun snapshot(): String {
         val now = SystemClock.elapsedRealtime()
@@ -114,12 +127,15 @@ private class RoadLimitService(ctx: Context) {
         val map = d?.limit
         val mapRoad = d?.wayId != null
         val nav = navigationLimit.takeIf { fresh && !mapRoad }
-        val value = if (mapRoad) map?.kmh?.takeIf { d!!.trusted } else nav
-        val source = if (mapRoad) "OSM" else if (nav != null) "Mapbox" else ""
+        val baseValue = if (mapRoad) map?.kmh?.takeIf { d!!.trusted } else nav
+        val camera = VoltaLimits.cameraChoice(now, d?.wayId)
+        val value = if (camera != null) camera.limit else baseValue
+        val source = if (camera != null) "Camera" else if (mapRoad) "OSM" else if (nav != null) "Mapbox" else ""
         val speed = SpeedChoice.choose(now, VoltaCar.speedSample(), p?.speedMs?.let { SpeedSample(it * 3.6, p.atMs) })
-        val active = guard.update(now, value, if (mapRoad) d!!.wayId.toString() else "navigation", speed,
+        val active = guard.update(now, value, source + "/" + (if (mapRoad) d!!.wayId.toString() else "navigation"), speed,
             fresh && warnings && !VoltaCar.isDemo(), tolerance)
         val status = when {
+            camera != null -> camera.status
             !fresh -> "gps"
             map?.uncertain == true -> "conditional"
             map?.estimated == true -> "estimated"

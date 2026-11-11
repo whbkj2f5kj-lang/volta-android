@@ -58,4 +58,50 @@ Exportierte Android-Logs und der vorherige Qt-Loghandler erhalten geschwaerzte S
 
 `tests/mapproxy_test.cpp` prueft den echten lokalen HTTP-Proxy mit simulierten Providern: 404/403, ungueltiger Stil, weiterhin erreichbarer Originalstil, Neustart mit gespeichertem Key, vollstaendiger Netzausfall und Logschwaerzung. Es werden keine echten API-Keys oder Provider-Anfragen verwendet. Ein voller Android-/BlueStacks-Neustart ist damit nicht simuliert.
 
-USB-Kameravorschau und Dashcam-Aufzeichnung sind eingebaut. Kamerabasierte Schildererkennung ist im Volta-Port noch nicht angeschlossen; OSM-Tempolimits sind eine separate Datenquelle.
+USB-Kameravorschau, Dashcam-Aufzeichnung und die Kamerabild-Anbindung der Schildererkennung sind eingebaut; OSM-Tempolimits bleiben eine separate Datenquelle.
+
+## Kamera und Schildererkennung
+
+**Einstellungen → Vehicle → USB camera** aktivieren und die Kamera-/USB-Berechtigungen erlauben.
+Die Live-Vorschau liegt in der **Volta-Kamera-App, grosses Feld Front dashcam**.
+Der Knopf **Open camera preview** im Vehicle-Bereich oeffnet genau diese Ansicht.
+Die seitlichen Kamerafelder bleiben unverbunden. Die Vorschau behaelt das Seitenverhaeltnis
+und verschwindet beim App-Wechsel; kein zweites Dashboard und keine Sprachausgabe.
+
+**Loop recording** und **Traffic sign recognition** sind separat schaltbar. Die
+Kamera bleibt standardmaessig aus; Aufnahme und Erkennung sind bei aktivierter Kamera
+zunaechst an (Aufnahme wie bisher). Fuer Vorschau/Erkennung ohne Videospeicherung
+Loop recording ausschalten. Es wird kein Ton aufgezeichnet. Bei USB-Kameras mit
+Mikrofon kann Android trotzdem die Mikrofonberechtigung fuer den Composite-USB-Zugriff
+verlangen. Nach Erlaubnis wird die Kamera automatisch erneut geoeffnet.
+
+Die Erkennung verwendet den W204-SignReader mit raeumlicher Mehrbildbestaetigung,
+frischen OCR-Lesungen statt wiederholt gezaehlten Cache-Ergebnissen und strenger
+Zahlenpruefung. Jede uebernommene Zahl braucht OCR; widersprechende Klassifikatorwerte
+werden verworfen (ausser nachvollziehbaren GTSRB-Klassenluecken wie 130/90/40).
+Fahrzeugmasken stammen aus demselben Bild und filtern Schilder/Aufkleber auf Autos und Lkw.
+Alle Modelle sind in der APK enthalten; keine Bilduebertragung an Cloud-Dienste,
+kein Modelldownload auf dem Radio und keine Google-Play-Dienste fuer OCR erforderlich.
+Modelle und Lizenzen: `core/src/main/assets/VISION_NOTICE.txt`.
+
+Bestaetigte unbedingte Limits haben zeitweise Vorrang vor Kartenwerten. Zusatzzeichen
+(Naesse, Lkw, Uhrzeiten, unleserliche Bedingungen) ergeben keinen allgemeinen Zahlenwert.
+Ein erkanntes Aufhebungs- oder Ortsschild erfindet kein neues Limit. Kamerawerte verfallen
+spaetestens nach 45 Sekunden, nach einem Wechsel der zugeordneten Strasse oder bei mehr
+als 3 Sekunden ohne Kamerabild; Ausschalten/Trennen loescht sie sofort. OSM/Navigation
+bleiben unabhaengige Datenquellen. Das ist keine rechtssichere Fahrspurzuordnung:
+Abbiegespuren, verdeckte Zusatzzeichen und schwierige Beleuchtung muessen am Fahrzeug
+mit echten Aufnahmen bewertet werden. Multi-frame-Verfahren reduzieren Fehlmeldungen,
+beweisen aber nicht die Gueltigkeit eines Schilds fuer die eigene Spur.
+
+Die Bildanalyse hat einen eigenen Arbeitsthread und hoechstens ein Bild in Bearbeitung;
+bei Last werden Bilder verworfen statt eine Warteschlange aufzubauen. Die ersten nativen
+Modell-/Bildaufrufe sind mit einer Startmarkierung abgesichert: Nach einer unterbrochenen
+Initialisierung bleibt die Erkennung beim naechsten Start aus, bis sie explizit wieder
+eingeschaltet wird. Kameravorschau und Aufnahme bleiben davon getrennt.
+
+Pruefung am Radio: USB-Geraet erkannt → Front-dashcam-Livebild → Aufnahme aus bei weiter
+laufender Erkennung → Erkennung aus/an → USB trennen/erneut anschliessen → App-Wechsel.
+IMX662 bezeichnet den Sensor; USB-Formate und Berechtigungen haengen vom konkreten
+Kameramodul und Radio ab. Die Integration ist automatisiert geprueft, die Hardwarefolge
+und reale Erkennungsqualitaet sind ohne die Kamera hier nicht bestaetigt.
