@@ -7,6 +7,7 @@
 #include <QQmlEngine>
 #include <QTimer>
 #include <QJsonArray>
+#include <QStringList>
 #include <QVariantList>
 #ifdef Q_OS_ANDROID
 #include <QJniEnvironment>
@@ -75,15 +76,17 @@ public:
         const QString raw = QJniObject::callStaticObjectMethod(kDash, "androidCameras",
             "(Landroid/content/Context;)Ljava/lang/String;", context().object()).toString();
         if (env.checkAndClearExceptions()) return;
-        QVariantList list;
+        QStringList names;
         const QJsonArray arr = QJsonDocument::fromJson(raw.toUtf8()).array();
         for (int i = 0; i < arr.size(); ++i) {
             const QJsonObject o = arr.at(i).toObject();
-            list << QStringLiteral("Kamera %1 (ID %2, %3)").arg(i + 1).arg(o.value("id").toString(), o.value("facing").toString());
+            names << QStringLiteral("Kamera %1 (ID %2, %3)").arg(i + 1).arg(o.value("id").toString(), o.value("facing").toString());
         }
+        QVariantList list;
+        for (const QString &n : names) list << n;
         if (list != m_cameras) {
             m_cameras = list;
-            qInfo().noquote() << "[dashcam] Android-Kameras:" << (list.isEmpty() ? QStringLiteral("keine") : list.join(QStringLiteral(", ")));
+            qInfo().noquote() << "[dashcam] Android-Kameras:" << (names.isEmpty() ? QStringLiteral("keine") : names.join(QStringLiteral(", ")));
             emit changed();
         }
 #endif
