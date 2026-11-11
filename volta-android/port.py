@@ -808,4 +808,50 @@ patch("qml/CameraApp.qml", [
     (r'        label: qsTr\("Rear"\)', '        label: qsTr("Front dashcam") + " · " + VoltaDashcam.status', 1),
 ])
 
+
+# Native map services keep Volta's existing views. Provider failures are visible, speech stays off.
+patch("qml/MapLibreView.qml", [
+    (r'Qt\.openUrlExternally\("https://" \+ root.selectedPlace.website\)', 'Qt.openUrlExternally((root.selectedPlace.website.indexOf("https://") === 0 || root.selectedPlace.website.indexOf("http://") === 0 ? "" : "https://") + root.selectedPlace.website)', 1),
+    (r'    property bool speedCamVoice: true', '    readonly property bool speedCamVoice: false', 1),
+    (r'    function refreshCams\(force\) \{', '    property real portCamFixAt: 0\n    property var portCamFixId: null\n    function portTrackCameraFix(d) {\n        if (!d.fix || !d.accuracyValid || !d.bearingValid || !d.speedValid || !(d.accuracy >= 0 && d.accuracy <= 30) || !(d.ageMs >= 0 && d.ageMs <= 3000)) { root.portCamFixAt = 0; return }\n        if (d.fixId !== undefined && d.fixId !== root.portCamFixId) { root.portCamFixId = d.fixId; root.portCamFixAt = Date.now() - d.ageMs }\n    }\n    function portCameraFixFresh() { var age = Date.now() - root.portCamFixAt; return age >= 0 && age <= 3000 }\n    function refreshCams(force) {\n        if (!root.portCameraFixFresh()) return', 1),
+    (r'    function evalCamAlert\(\) \{', '    function evalCamAlert() {\n        if (!root.portCameraFixFresh()) { root.camAlert = null; return }', 1),
+    (r'    function handleGpsFix\(d\) \{', '    function handleGpsFix(d) {\n        root.portTrackCameraFix(d)', 1),
+    (r'    property bool nearbyLoading: false', '    property bool nearbyLoading: false\n    property string portNearbyStatus: ""\n    property int portNearbySeq: 0', 1),
+    (r'        root.nearbyLoading = true', '        root.nearbyLoading = true\n        root.portNearbyStatus = ""\n        var requestSeq = ++root.portNearbySeq', 1),
+    (r'                root.nearbyLoading = false', '                if (requestSeq !== root.portNearbySeq) return\n                root.nearbyLoading = false\n                if (xhr.status !== 200) root.portNearbyStatus = qsTr("Nearby search unavailable. Check the TomTom key and internet connection.")', 1),
+    (r'text: qsTr\("No results nearby"\)', 'text: root.portNearbyStatus || qsTr("No results nearby")', 1),
+    (r'    property var poiSearchResults: \[\]', '    property var poiSearchResults: []\n    property string portPlaceStatus: ""\n    property int portPlaceSeq: 0', 1),
+    (r'^    function poiSearch\(q\) \{[\s\S]*?^    \}', r"""    function poiSearch(q) {
+        var seq = ++root.portPlaceSeq
+        root.poiSearchResults = []
+        root.portPlaceStatus = qsTr("Searching…")
+        var xhr = new XMLHttpRequest()
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE || seq !== root.portPlaceSeq || searchInput.text.trim() !== q) return
+            if (xhr.status === 200) {
+                try {
+                    var list = JSON.parse(xhr.responseText)
+                    root.poiSearchResults = list
+                    root.portPlaceStatus = list.length ? "" : qsTr("No matching places")
+                    return
+                } catch(e) {}
+            }
+            root.poiSearchResults = []
+            root.portPlaceStatus = qsTr("Search unavailable. Check the TomTom or MapTiler key and internet connection.")
+        }
+        xhr.open("GET", "http://127.0.0.1:9098/poi-search?q=" + encodeURIComponent(q) +
+                        "&lat=" + root.carLat + "&lon=" + root.carLon)
+        xhr.send()
+    }""", 1),
+    (r'(                id: contentCol\n                width: parent.width\n)', r"""\1
+                Text {
+                    width: parent.width
+                    visible: searchInput.text.trim().length >= 2 && root.portPlaceStatus !== "" && root.nearbyPanelType === ""
+                    text: root.portPlaceStatus
+                    color: root.cSubtle; font.pixelSize: 14; wrapMode: Text.WordWrap
+                    leftPadding: 20; rightPadding: 20; topPadding: 12; bottomPadding: 12
+                }
+""", 1),
+])
+
 print("port.py: ok")

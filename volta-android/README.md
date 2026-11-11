@@ -17,6 +17,62 @@ Bluetooth unterscheidet fehlende Hardware, fehlende Berechtigungen und einen aus
 
 OBD verwendet derzeit Bluetooth Classic SPP. USB-TPMS-Unterstützung bedeutet nicht USB-OBD-Unterstützung. Physischer TPMS-Empfänger, Bluetooth-Radio und Anbieter-Anmeldungen müssen zusätzlich am Zielgerät geprüft werden.
 
+## Kartendienste: Suche, POIs, Ampelstandorte und Regenradar
+
+Die vorhandenen Volta-Kartenansichten verwenden jetzt native Android-/Qt-Routen statt
+der nicht verfuegbaren Python-Dienste. Das Layout und Voltas GPS bleiben erhalten.
+
+- **Suche:** `/poi-search` nutzt `TOMTOM_KEY`; bei fehlendem Key oder Anbieterfehler
+  faellt die Adresssuche auf `MAPTILER_KEY` zurueck. Text wird sicher als Suchtext
+  kodiert. Die Suche ist nicht auf die naehere Umgebung beschraenkt. Ein veraltetes
+  Suchergebnis kann keine neuere Suchantwort ueberschreiben.
+- **Tankstellen/Restaurants:** `/nearby-places` nutzt TomTom (15 km, maximal 20
+  Ergebnisse). Dafuer wird `TOMTOM_KEY` benoetigt. Es werden keine Kraftstoffpreise
+  erfunden oder aus dem italienischen Originaldienst fuer Deutschland uebernommen.
+- **Strasse/Ort:** `/reverse-geocode` nutzt MapTiler, ersatzweise TomTom. Fehlende
+  Keys und Netzfehler werden nicht als erfolgreiche Anbieterantwort behandelt.
+- **POIs, Ampeln/Stoppschilder und feste Blitzer:** `/map-pois`, `/map-signals`
+  und `/map-speedcams` lesen OpenStreetMap ueber die bereits fuer Tempolimits
+  verwendeten Overpass-Server. Symbole, Detailansichten und visuelle Hinweise kommen
+  aus Voltas vorhandener Oberflaeche. Ampeldaten bezeichnen Standorte, keine
+  Echtzeit-Ampelphasen. Blitzer sind OSM-Eintraege, kein Live-Verzeichnis mobiler
+  Kontrollen. Unbekannte Richtung/Tempolimits bleiben unbekannt; keine Sprachausgabe.
+  Visuelle Blitzerwarnungen setzen einen hoechstens drei Sekunden alten Android-GPS-Fix
+  mit gueltiger Geschwindigkeit/Richtung und hoechstens 30 m Genauigkeitsradius voraus.
+  Wiederholte Auslieferungen desselben Fixes verlaengern diese Frist nicht. Die geometrische
+  Vorauswahl garantiert trotzdem keine Zuordnung zur eigenen Fahrspur oder Strasse.
+- **Wetter:** `WeatherPopup.qml` bezieht Vorhersage und Luftqualitaet bereits direkt
+  von Open-Meteo. Neu ist `?w=1` im Kartenstil und `/weather-tile/z/x/y` fuer das
+  Regenradar: RainViewer, bei Ausfall OpenWeather mit `OWM_KEY`. Kein Key fuer
+  RainViewer erforderlich. Zoomstufen ueber 7 vergroessert die Kartenengine; es
+  wird keine hoehere Radaraufloesung behauptet. Die Regenfarben stammen vom Anbieter.
+  Mehr als zwei Stunden alte Radarframes werden nicht als aktuelles Radar gezeigt.
+
+Provider-Keys bleiben in der vorhandenen privaten `keys.env`. Such-/Umgebungspunkte
+gehen an den jeweiligen Suchanbieter, OSM-Abfragen an Overpass und Radarkacheln an
+RainViewer/OpenWeather. Kameraaufnahmen sind an keinem dieser Aufrufe beteiligt.
+
+Abfragen sind asynchron, gleichzeitige Downloads und Warteschlangen begrenzt.
+Hochstens zwei Overpass-Anfragen laufen zugleich; Suchanfragen haben eigene freie
+Kapazitaet und Prioritaet vor wartenden Kartenkacheln. Pro Kartenausschnitt werden
+hoechstens zwoelf Kacheln geladen (JSON markiert abgeschnittene Ausschnitte).
+Fehler haben eine 60-Sekunden-Pause. Der getrennte Cache ist auf rund 24 MiB und
+160 Dateien begrenzt, einzelne Antworten auf 4 MiB. POIs/Blitzer sind sieben Tage,
+Ampeln 30 Tage frisch; begrenzt aeltere Kopien werden waehrend einer Aktualisierung
+als `stale` markiert. Such- und Wetterdaten werden nicht unbegrenzt als aktuell
+ausgegeben. Suchtexte, Standorte und Provider-Keys werden nicht ins Dienstlog geschrieben.
+
+Automatische Tests verwenden simulierte Anbieterantworten und Dummy-Keys, u.a.
+Offline-Neustart, API-Fehler, Cache, ungueltige Koordinaten, Radar-Metadaten und
+Antwortformate. Echte TomTom-/MapTiler-Key-Berechtigungen muessen mit den am Radio
+gespeicherten Keys bestaetigt werden.
+
+Quellen: [VoltaOS map_proxy.py](https://github.com/Omardigio/VoltaOS/blob/7304484efe66a5412445f51838f68ef56075fd5f/services/map_proxy.py)
+(GPL-3.0), [OpenStreetMap](https://www.openstreetmap.org/copyright) (ODbL),
+[TomTom Search](https://developer.tomtom.com/search-api/documentation),
+[MapTiler Geocoding](https://docs.maptiler.com/cloud/api/geocoding/),
+[RainViewer](https://www.rainviewer.com/api.html), [OpenWeather](https://openweathermap.org/api/weathermaps).
+
 ## Camera / USB dashcam (source: Jarvis ASD)
 
 The opt-in USB-camera feature reuses the UVC driver strategy from

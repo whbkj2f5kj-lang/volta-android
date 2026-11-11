@@ -7,7 +7,7 @@
 // Mit MAPTILER_KEY (+ MAPBOX_TOKEN) wird derselbe Stil wie im Original geladen und genauso
 // umgebaut. Ohne Schluessel gibt es als Ausweichloesung die freien OpenFreeMap-Stile
 // (OpenStreetMap-Daten, kein Schluessel noetig) - sieht anders aus als Voltas eigener Stil.
-// Nicht nachgebaut: Wetter-Radar, POIs/Ampeln/Blitzer (Overpass), Ortssuche, Spritpreise.
+// Places/radar routes: volta_places.h. Fuel prices are not included.
 // GPL-3.0-or-later
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -33,6 +33,7 @@
 #include <QUrlQuery>
 #include <functional>
 #include <memory>
+#include "volta_places.h"
 
 namespace {
 
@@ -239,7 +240,16 @@ QByteArray transformStyle(const QByteArray &raw, const QString &s, const QUrlQue
         }
         layers = out;
     }
-    // ?w=1 (Wetter-Radar) ist im Port noch nicht enthalten: die Karte bleibt ohne Regenschicht.
+    if (q.queryItemValue(QLatin1String("w")) == QLatin1String("1")) {
+        sources["weather-radar"] = QJsonObject{{"type","raster"},{"tileSize",256},{"minzoom",0},{"maxzoom",7},
+            {"tiles",QJsonArray{"http://127.0.0.1:9098/weather-tile/{z}/{x}/{y}"}},
+            {"attribution","Weather radar: RainViewer / OpenWeather"}};
+        QJsonObject layer{{"id","weather-layer"},{"type","raster"},{"source","weather-radar"},
+            {"paint",QJsonObject{{"raster-opacity",0.65},{"raster-resampling","linear"},{"raster-fade-duration",0}}}};
+        int index=layers.size();
+        for(int i=0;i<layers.size();++i) if(layers[i].toObject()["type"]=="symbol"){index=i;break;}
+        layers.insert(index,layer);
+    }
 
     data[QLatin1String("sources")] = sources;
     data[QLatin1String("layers")] = layers;
@@ -270,6 +280,7 @@ public:
     {
         m_cache = cache.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/volta_mapproxy") : cache;
         QDir().mkpath(m_cache);
+        m_places = new VoltaPlaces::Services(this,m_net,m_cache);
         connect(&m_srv, &QTcpServer::newConnection, this, [this]() {
             while (QTcpSocket *s = m_srv.nextPendingConnection()) accept(s);
         });
@@ -395,6 +406,7 @@ private:
         const QString maptiler = envKey("MAPTILER_KEY");
 
         if (path == QLatin1String("/ping")) { reply(s, 200, "text/plain", "ok"); return; }
+        if (m_places->handle(s,url)) return;
 
         if (path == QLatin1String("/style.json")) {
             const QString style = q.queryItemValue(QLatin1String("s")).isEmpty() ? QStringLiteral("dark")
@@ -501,7 +513,7 @@ private:
                 return;
             }
         }
-        // alles andere (POIs, Ampeln, Blitzer, Suche, Wetter ...) gibt es im Port noch nicht
+        // Remaining non-map services (fuel prices, phone destination sharing, etc.).
         if (!m_missing.contains(parts.value(0)) && m_missing.size() < 40) {
             m_missing.insert(parts.value(0));
             qInfo().noquote() << "[mapproxy] not ported yet:" << path;
@@ -511,6 +523,7 @@ private:
 
     QTcpServer m_srv;
     QNetworkAccessManager *m_net;
+    VoltaPlaces::Services *m_places;
     QSet<QString> m_badStyles;
     QString m_cache;
     QSet<QString> m_missing;
