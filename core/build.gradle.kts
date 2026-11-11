@@ -1,3 +1,6 @@
+import java.net.URL
+import java.security.MessageDigest
+
 plugins {
     id("com.android.library") version "8.5.2"
     id("org.jetbrains.kotlin.android") version "2.0.20"
@@ -31,9 +34,9 @@ val prepareVisionModel by tasks.registering {
         val dest = vehicleModel.get().asFile
         val expected = "0720bf247bd76e6594ea28fa9c6f7c5242be774818997dbbeffc4da460c723bb"
         val url = "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite"
-        val connection = java.net.URL(url).openConnection().apply { connectTimeout = 20_000; readTimeout = 30_000 }
+        val connection = URL(url).openConnection().apply { connectTimeout = 20_000; readTimeout = 30_000 }
         val bytes = connection.getInputStream().use { it.readBytes() }
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         check(digest == expected) { "Unexpected vehicle model checksum" }
         dest.parentFile.mkdirs()
         dest.writeBytes(bytes)
