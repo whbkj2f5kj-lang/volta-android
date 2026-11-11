@@ -167,6 +167,17 @@ jobs:
         with: { name: corelibs, path: volta-android/android/libs }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
+      # Ubuntu-Pakete: die Paketserver von GitHub fallen manchmal aus (DNS) und apt-get haengt dann.
+      # Deshalb hier mit Zeitlimit und ohne Abbruch; was fehlt, wird unten ersetzt oder weggelassen.
+      - name: Systempakete (falls Paketserver erreichbar)
+        timeout-minutes: 6
+        continue-on-error: true
+        run: |
+          sudo timeout 150 apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 update -q || true
+          sudo timeout 180 apt-get install -y -q ninja-build ccache build-essential libgl1-mesa-dev libxkbcommon-dev \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
+            libxcb-shape0 libxcb-xinerama0 libxcb-xkb-dev || echo "::warning::Ubuntu-Pakete nicht installierbar - weiter mit vorhandenen"
+          command -v ninja >/dev/null || pip install ninja || true
       # Qt: normal in ~1 Minute (Zwischenspeicher). Haengt Zwischenspeicher oder Qt-Server, nach 8 Minuten
       # abbrechen und ohne Zwischenspeicher ueber einen anderen Qt-Spiegelserver neu laden.
       - id: qtdesk
@@ -181,6 +192,7 @@ jobs:
           modules: ${{ env.QT_MODULES }}
           dir: ${{ runner.temp }}
           cache: true
+          install-deps: false
       - name: Qt Desktop (Ersatzserver)
         if: steps.qtdesk.outcome != 'success'
         uses: jurplel/install-qt-action@v4
@@ -193,6 +205,7 @@ jobs:
           modules: ${{ env.QT_MODULES }}
           dir: ${{ runner.temp }}
           cache: false
+          install-deps: false
           extra: --base https://mirrors.ocf.berkeley.edu/qt/
       - id: qtandroid
         uses: jurplel/install-qt-action@v4
@@ -206,6 +219,7 @@ jobs:
           modules: ${{ env.QT_MODULES }} qtwebview
           dir: ${{ runner.temp }}
           cache: true
+          install-deps: false
       - name: Qt Android (Ersatzserver)
         if: steps.qtandroid.outcome != 'success'
         uses: jurplel/install-qt-action@v4
@@ -218,10 +232,11 @@ jobs:
           modules: ${{ env.QT_MODULES }} qtwebview
           dir: ${{ runner.temp }}
           cache: false
+          install-deps: false
           extra: --base https://mirrors.ocf.berkeley.edu/qt/
       - name: Android-SDK
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache
+          command -v ninja >/dev/null || pip install ninja
           for i in 1 2 3; do
             yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;$NDK_VERSION" "platforms;android-35" "build-tools;35.0.0" > /dev/null && break || sleep 20
           done
@@ -248,7 +263,9 @@ jobs:
           fi
       - name: Bauen
         run: |
-          ccache --zero-stats
+          # ccache nur, wenn installiert (Paketserver koennen ausfallen)
+          LAUNCH=""
+          if command -v ccache >/dev/null; then ccache --zero-stats; LAUNCH="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"; fi
           python3 volta-android/port.py upstream
           # Qts Gradle-Vorlage + Kotlin/Coroutines fuer die Fahrzeug-Technik (core/)
           QTA=$RUNNER_TEMP/Qt/$QT_VERSION/${{ matrix.qtarch }}
@@ -267,7 +284,7 @@ jobs:
           B=$RUNNER_TEMP/vbuild   # ausserhalb des Repos: dort liegt ein fremdes settings.gradle
           chmod -R u+x $QT/*/bin $QT/*/libexec 2>/dev/null || true
           $QT/${{ matrix.qtarch }}/bin/qt-cmake -S upstream -B $B -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            $LAUNCH \
             -DQT_HOST_PATH=$QT/gcc_64 -DANDROID_SDK_ROOT=$ANDROID_SDK_ROOT -DANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION \
             -DVOLTA_PORT_DIR=$PWD/volta-android -DVOLTA_PORT_STAMP=${GITHUB_SHA::8} -DVOLTA_OPENSSL_DIR=$PWD/android_openssl \
             -DVOLTA_MAPLIBRE_DIR=$PWD/mlinstall \
