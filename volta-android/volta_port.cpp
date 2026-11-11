@@ -283,6 +283,7 @@ void voltaPortRegisterLimits();
 void voltaPortRegisterTpms();
 void voltaPortRegisterUpdate();   // android_update.cpp
 void voltaPortRegisterCan();      // android_can.cpp
+void voltaPortRegisterKnob();     // android_knob.cpp
 const char *voltaPortStamp() { return VOLTA_PORT_STAMP; }
 void voltaPortRegisterDashcam();
 void voltaPortRegisterCar();     // android_car.cpp
@@ -327,6 +328,7 @@ static void voltaPortPrepare()
     voltaPortRegisterTpms();
     voltaPortRegisterUpdate();
     voltaPortRegisterCan();
+    voltaPortRegisterKnob();
     voltaPortRegisterLimits();
 #ifdef Q_OS_ANDROID
     // CAN-Daten des Radios mitlesen (nur lesen) -> volta_can_log.txt

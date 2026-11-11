@@ -56,6 +56,7 @@ target_sources(VoltaOS PRIVATE
     ${VOLTA_PORT_DIR}/android_tpms.cpp
     ${VOLTA_PORT_DIR}/android_update.cpp
     ${VOLTA_PORT_DIR}/android_can.cpp
+    ${VOLTA_PORT_DIR}/android_knob.cpp
     ${VOLTA_PORT_DIR}/volta_mapproxy.cpp
     ${VOLTA_PORT_DIR}/shim/volta_webshim.h)
 target_include_directories(VoltaOS BEFORE PRIVATE
