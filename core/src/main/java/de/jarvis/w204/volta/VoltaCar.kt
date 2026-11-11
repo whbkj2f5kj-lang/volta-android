@@ -40,7 +40,44 @@ object VoltaCar {
     /** Verbindet mit dem OBD-Adapter (Bluetooth-Adresse) oder startet Demo-Werte. */
     @JvmStatic
     fun start(ctx: Context, address: String?, demo: Boolean) {
-        manager(ctx).start(address?.takeIf { it.isNotBlank() }, demo)
+        ObdLog.init(ctx)
+        ObdLog.line("Start: Adapter " + (address?.takeIf { it.isNotBlank() } ?: "keiner") + (if (demo) " (Demo)" else ""))
+        val m = manager(ctx)
+        watch(m)
+        m.start(address?.takeIf { it.isNotBlank() }, demo)
+    }
+
+    // Verbindungswechsel, alle 30 s die Live-Werte und einmal je Verbindung automatisch den Mercedes-Test ins OBD-Log
+    @Volatile private var watching = false
+    @Volatile private var autoTestDone = false
+    private fun watch(m: ObdManager) {
+        if (watching) return
+        watching = true
+        scope.launch {
+            var last = ""
+            var connectedAt = 0L
+            var lastValues = 0L
+            while (true) {
+                val st = m.status.value
+                val key = st.state.name + " " + st.message
+                if (key != last) {
+                    ObdLog.line("Verbindung: $key")
+                    last = key
+                    connectedAt = if (st.state == ConnState.CONNECTED) SystemClock.elapsedRealtime() else 0L
+                    if (st.state != ConnState.CONNECTED) autoTestDone = false
+                }
+                val now = SystemClock.elapsedRealtime()
+                if (st.state == ConnState.CONNECTED) {
+                    if (now - lastValues > 30_000) { ObdLog.line("Werte: " + snapshot()); lastValues = now }
+                    if (!autoTestDone && connectedAt > 0 && now - connectedAt > 15_000) {
+                        autoTestDone = true
+                        ObdLog.line("Mercedes-Test startet automatisch (einmal je Verbindung)")
+                        runMercedesCheck()
+                    }
+                }
+                kotlinx.coroutines.delay(1000)
+            }
+        }
     }
 
     @JvmStatic
@@ -167,6 +204,7 @@ object VoltaCar {
                 diagnosticState = "error"
             } finally {
                 diagnosticText = lines.joinToString("\n")
+                ObdLog.block("Mercedes-Test", diagnosticText)
                 diagnosticsRunning.set(false)
             }
         }

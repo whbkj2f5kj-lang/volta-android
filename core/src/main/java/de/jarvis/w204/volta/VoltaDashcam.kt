@@ -123,6 +123,9 @@ object VoltaDashcam {
         return JSONObject()
             .put("enabled", enabled)
             .put("cameraOpen", cameraOpen)
+            .put("preview", previewVisible)
+            .put("frames", lastFrameAt > 0 && SystemClock.elapsedRealtime() - lastFrameAt < 3000)
+            .put("frameSize", "${frameWidth}x$frameHeight")
             .put("recordingEnabled", recordingEnabled)
             .put("signsEnabled", signsEnabled)
             .put("signStatus", if (visionRecovered && !signsEnabled) "Letzte Bildanalyse-Initialisierung unterbrochen; erneut aktivieren" else if (!signsEnabled) "Schildererkennung aus" else if (!enabled || !cameraOpen || SystemClock.elapsedRealtime() - lastFrameAt > 3000) "Warte auf Kamerabild" else VoltaSignProcessor.status)
@@ -178,6 +181,7 @@ object VoltaDashcam {
                 if (old == null || old.width != lp.width || old.height != lp.height || old.leftMargin != lp.leftMargin || old.topMargin != lp.topMargin)
                     view.layoutParams = lp
                 view.visibility = View.VISIBLE
+                view.bringToFront()
             } else view.visibility = View.INVISIBLE
         }
     }
@@ -323,6 +327,13 @@ object VoltaDashcam {
                 state = "USB-Kamera-Fehler: ${e?.message ?: "unbekannt"}"
             }
         })
-        c.selectDevice(cam)
+        // Wie in Jarvis: das Geraet wird ueber onAttach ausgewaehlt. Nur falls das ausbleibt,
+        // einmal selbst auswaehlen (doppeltes Auswaehlen oeffnete die Kamera zweimal).
+        ui.postDelayed({
+            if (enabled && helper === c && !open.get() && state == "Öffne USB-Kamera …") {
+                state = "USB-Kamera ohne Anmeldung – Zugriff anfordern"
+                runCatching { c.selectDevice(cam) }
+            }
+        }, 2500)
     }
 }

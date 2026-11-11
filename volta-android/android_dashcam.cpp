@@ -119,6 +119,14 @@ private:
         const QString st = obj.value("status").toString();
         const int fps = obj.value("fps").toInt();
         const int saved = obj.value("savedCount").toInt();
+        const QString view = QStringLiteral("open=%1 frames=%2 preview=%3 %4")
+            .arg(obj.value("cameraOpen").toBool()).arg(obj.value("frames").toBool())
+            .arg(obj.value("preview").toBool()).arg(obj.value("frameSize").toString());
+        static QString lastView;
+        if (e && view != lastView) { qInfo().noquote() << "[dashcam]" << view; lastView = view; }
+        if (st != m_status || e != m_enabled)
+            qInfo().noquote() << "[dashcam]" << (e ? "on:" : "off:") << st << "| error:" << obj.value("error").toString()
+                              << "| signs:" << signStatus;
         if (e != m_enabled || r != m_recording || st != m_status || fps != m_fps || saved != m_saved ||
             recEnabled != m_recordingEnabled || signsEnabled != m_signsEnabled || signStatus != m_signStatus || signFps != m_signFps) {
             m_enabled = e; m_recording = r; m_status = st; m_fps = fps; m_saved = saved;
