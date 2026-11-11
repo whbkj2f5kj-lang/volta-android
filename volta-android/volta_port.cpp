@@ -8,6 +8,7 @@
 #include <QStandardPaths>
 #include <QUrl>
 #include <QDebug>
+#include "volta_log_sanitize.h"
 
 #include <QGuiApplication>
 #include <QWindow>
@@ -130,12 +131,12 @@ static void voltaLogHandler(QtMsgType type, const QMessageLogContext &ctx, const
     const char *lvl = type == QtDebugMsg ? "D" : type == QtInfoMsg ? "I" : type == QtWarningMsg ? "W"
                     : type == QtCriticalMsg ? "E" : "F";
     QByteArray line = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss.zzz")).toLatin1();
-    line += ' '; line += lvl; line += ' '; line += msg.toUtf8(); line += '\n';
+    line += ' '; line += lvl; line += ' '; line += voltaSafeLog(msg).toUtf8(); line += '\n';
     {
         QMutexLocker lock(&g_logMutex);
         voltaLogRaw(line);
     }
-    if (g_prevHandler) g_prevHandler(type, ctx, msg);
+    if (g_prevHandler) g_prevHandler(type, ctx, voltaSafeLog(msg));
 }
 
 static struct sigaction g_oldSig[32];

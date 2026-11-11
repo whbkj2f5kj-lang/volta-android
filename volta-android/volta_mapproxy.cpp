@@ -125,6 +125,10 @@ QByteArray transformStyle(const QByteArray &raw, const QString &s, const QUrlQue
         return {};
     }
     QJsonObject data = doc.object();
+    if (data.value("version").toInt() != 8 || !data.value("sources").isObject() || !data.value("layers").isArray()) {
+        qWarning() << "[mapproxy] invalid map style schema";
+        return {};
+    }
     QJsonObject sources = data.value(QLatin1String("sources")).toObject();
     QJsonArray layers = data.value(QLatin1String("layers")).toArray();
 
@@ -261,18 +265,21 @@ QByteArray transformStyle(const QByteArray &raw, const QString &s, const QUrlQue
 class MapProxy : public QObject
 {
 public:
-    explicit MapProxy(QObject *parent) : QObject(parent)
+    explicit MapProxy(QObject *parent, QNetworkAccessManager *network = nullptr, const QString &cache = {}, quint16 port = 9098)
+        : QObject(parent), m_net(network ? network : new QNetworkAccessManager(this))
     {
-        m_cache = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/volta_mapproxy");
+        m_cache = cache.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/volta_mapproxy") : cache;
         QDir().mkpath(m_cache);
         connect(&m_srv, &QTcpServer::newConnection, this, [this]() {
             while (QTcpSocket *s = m_srv.nextPendingConnection()) accept(s);
         });
-        if (m_srv.listen(QHostAddress::LocalHost, 9098))
+        if (m_srv.listen(QHostAddress::LocalHost, port))
             qInfo().noquote() << "[mapproxy] listening on 127.0.0.1:9098, cache" << m_cache;
         else
             qWarning().noquote() << "[mapproxy] cannot listen on 9098:" << m_srv.errorString();
     }
+
+    quint16 port() const { return m_srv.serverPort(); }
 
 private:
     using Done = std::function<void(int status, const QByteArray &data)>;
@@ -335,7 +342,7 @@ private:
         req.setTransferTimeout(12000);
         req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         req.setRawHeader("User-Agent", "VoltaOS-android-port");
-        QNetworkReply *r = m_net.get(req);
+        QNetworkReply *r = m_net->get(req);
         connect(r, &QNetworkReply::finished, this, [r, dir, path, done]() {
             r->deleteLater();
             const int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -352,8 +359,30 @@ private:
             static int shown = 0;
             if (shown++ < 12)
                 qWarning().noquote() << "[mapproxy] fetch failed:" << r->url().host() << r->url().path().left(60)
-                                     << "status" << status << r->errorString();
+                                     << "status" << status << "network error" << int(r->error());
             done(status > 0 ? status : 502, {});
+        });
+    }
+
+    static void offlineStyle(const QPointer<QTcpSocket> &socket, const QString &style)
+    {
+        // Valid, empty map style: network failure must not become a startup dependency.
+        const QJsonObject background{{"id", "offline-background"}, {"type", "background"},
+            {"paint", QJsonObject{{"background-color", style == "light" ? "#E5E5E5" : "#171717"}}}};
+        const QJsonObject data{{"version", 8}, {"name", "Maps temporarily unavailable"},
+            {"sources", QJsonObject()}, {"layers", QJsonArray{background}}};
+        qWarning() << "[mapproxy] no map style reachable; showing background only (map data unavailable)";
+        reply(socket, 200, "application/json", QJsonDocument(data).toJson(QJsonDocument::Compact));
+    }
+
+    void fallbackStyle(const QPointer<QTcpSocket> &socket, const QString &style, const QUrlQuery &query)
+    {
+        const QUrl url(style == "light" ? "https://tiles.openfreemap.org/styles/liberty"
+                                           : "https://tiles.openfreemap.org/styles/dark");
+        fetch("style", md5(url.toString()), url, 1800, [socket, style, query](int status, const QByteArray &raw) {
+            const QByteArray data = status == 200 ? transformStyle(raw, style, query, false) : QByteArray();
+            if (data.isEmpty()) offlineStyle(socket, style);
+            else reply(socket, 200, "application/json", data, "no-store, no-cache, must-revalidate, max-age=0");
         });
     }
 
@@ -387,11 +416,21 @@ private:
                                                                        : "OpenFreeMap fallback (no MAPTILER_KEY)")
                                   << "- Mapbox token" << (mapbox.isEmpty() ? "missing" : "present");
             }
-            fetch(QStringLiteral("style"), md5(src.toString()), src, 1800, [s, style, q, keyed](int st, const QByteArray &raw) {
-                if (st != 200) { reply(s, 502, "application/json", "{\"error\":\"map style unreachable\"}"); return; }
-                const QByteArray out = transformStyle(raw, style, q, keyed);
-                if (out.isEmpty()) { reply(s, 502, "application/json", "{\"error\":\"map style invalid\"}"); return; }
-                reply(s, 200, "application/json", out, "no-store, no-cache, must-revalidate, max-age=0");
+            // A saved key does not grant access to Volta's private/custom style UUIDs.
+            // Keep the UI usable when that style is missing, forbidden or malformed.
+            const QString id = md5(src.toString());
+            if (keyed && m_badStyles.contains(id)) { fallbackStyle(s, style, q); return; }
+            fetch(QStringLiteral("style"), id, src, 1800, [this, s, style, q, keyed, id](int st, const QByteArray &raw) {
+                const QByteArray out = st == 200 ? transformStyle(raw, style, q, keyed) : QByteArray();
+                if (!out.isEmpty()) {
+                    reply(s, 200, "application/json", out, "no-store, no-cache, must-revalidate, max-age=0");
+                    return;
+                }
+                if (keyed) {
+                    m_badStyles.insert(id);
+                    qWarning() << "[mapproxy] keyed map style unavailable; using free map style for this session";
+                    fallbackStyle(s, style, q);
+                } else offlineStyle(s, style);
             });
             return;
         }
@@ -471,7 +510,8 @@ private:
     }
 
     QTcpServer m_srv;
-    QNetworkAccessManager m_net;
+    QNetworkAccessManager *m_net;
+    QSet<QString> m_badStyles;
     QString m_cache;
     QSet<QString> m_missing;
     bool m_saidStyle = false;

@@ -49,3 +49,13 @@ Volta retains its own Camera app and Tesla-style Settings UI.
 The **Vehicle** icon and sidebar scrolling are separately corrected: no
 missing `ms_speed.svg`, and sidebar taps no longer use a competing full-size
 MouseArea.
+
+## Start mit gespeicherten Karten-Keys
+
+Ein gueltiger MapTiler-Key garantiert keinen Zugriff auf Voltas fest eingetragene Custom-Stile. Liefert ein Stil 404/403 oder ungueltige Daten, faellt der Android-Kartenproxy auf OpenFreeMap zurueck und unterdrueckt weitere Versuche fuer denselben fehlgeschlagenen Stil bis zum Neustart. Geaenderte Keys erhalten einen neuen Versuch. Ist auch die freie Karte nicht erreichbar, wird ein gueltiger Hintergrundstil ohne Kartendaten geliefert. Schluesseldatei und Modelle werden dabei nicht geloescht.
+
+Exportierte Android-Logs und der vorherige Qt-Loghandler erhalten geschwaerzte Schluessel. Karten-Netzwerkfehler protokollieren Host, Pfad, HTTP- und Netzwerkstatus, keine URL mit Query-Key. Bereits vorhandene Logs werden dadurch nicht nachtraeglich geaendert.
+
+`tests/mapproxy_test.cpp` prueft den echten lokalen HTTP-Proxy mit simulierten Providern: 404/403, ungueltiger Stil, weiterhin erreichbarer Originalstil, Neustart mit gespeichertem Key, vollstaendiger Netzausfall und Logschwaerzung. Es werden keine echten API-Keys oder Provider-Anfragen verwendet. Ein voller Android-/BlueStacks-Neustart ist damit nicht simuliert.
+
+USB-Kameravorschau und Dashcam-Aufzeichnung sind eingebaut. Kamerabasierte Schildererkennung ist im Volta-Port noch nicht angeschlossen; OSM-Tempolimits sind eine separate Datenquelle.
