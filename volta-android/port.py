@@ -54,6 +54,7 @@ target_sources(VoltaOS PRIVATE
     ${VOLTA_PORT_DIR}/android_dashcam.cpp
     ${VOLTA_PORT_DIR}/android_limits.cpp
     ${VOLTA_PORT_DIR}/android_tpms.cpp
+    ${VOLTA_PORT_DIR}/android_update.cpp
     ${VOLTA_PORT_DIR}/volta_mapproxy.cpp
     ${VOLTA_PORT_DIR}/shim/volta_webshim.h)
 target_include_directories(VoltaOS BEFORE PRIVATE
@@ -867,3 +868,20 @@ patch("qml/MapLibreView.qml", [
 ])
 
 print("port.py: ok")
+
+# ── Selbst-Update: Karte "Update bereit" mit einem Tipp zum Installieren ─────
+patch("qml/Main.qml", [
+    (r'^    Connections \{\n        target: VoltaLimits\n',
+     '''    Connections {
+        target: VoltaUpdate
+        function onReadyToInstall() {
+            notifStack.notify({ id: "volta-update", iconType: "info", iconColor: "#3D6FE7",
+                title: qsTr("Volta update ready"),
+                subtitle: VoltaUpdate.message !== "" ? VoltaUpdate.message : qsTr("New version %1").arg(VoltaUpdate.remote),
+                actionLabel: qsTr("Install"), onAction: function() { VoltaUpdate.install() } })
+        }
+    }
+    Connections {
+        target: VoltaLimits
+''', 1),
+])

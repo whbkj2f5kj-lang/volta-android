@@ -281,6 +281,8 @@ void voltaPortStartMapProxy();   // volta_mapproxy.cpp
 void voltaPortRegisterApps();    // android_apps.cpp
 void voltaPortRegisterLimits();
 void voltaPortRegisterTpms();
+void voltaPortRegisterUpdate();   // android_update.cpp
+const char *voltaPortStamp() { return VOLTA_PORT_STAMP; }
 void voltaPortRegisterDashcam();
 void voltaPortRegisterCar();     // android_car.cpp
 #ifdef Q_OS_ANDROID
@@ -322,6 +324,7 @@ static void voltaPortPrepare()
     voltaPortRegisterCar();
     voltaPortRegisterDashcam();
     voltaPortRegisterTpms();
+    voltaPortRegisterUpdate();
     voltaPortRegisterLimits();
 #ifndef Q_OS_ANDROID
     // auf dem Linux-Testrechner nur auf Wunsch (dort gibt es sonst Voltas Python-Dienst)

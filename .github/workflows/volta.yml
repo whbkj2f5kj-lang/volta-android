@@ -35,9 +35,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: linux, qtarch: linux_gcc_64, abi: '' }
           - { name: arm64, qtarch: android_arm64_v8a, abi: arm64-v8a }
-          - { name: arm32, qtarch: android_armv7, abi: armeabi-v7a }
     steps:
       - id: cache
         uses: actions/cache@v4
@@ -106,105 +104,6 @@ jobs:
           gh release upload volta -R ${{ github.repository }} out/* --clobber || true
 
   # Gleicher Quelltext mit denselben Platzhaltern auf Linux: liefert Bildschirmfotos zur Kontrolle.
-  vorschau:
-    needs: maplibre
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
-    env:
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_BASEDIR: ${{ github.workspace }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: C++ Compiler-Cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.os }}-volta-ccache-v1-qt${{ env.QT_VERSION }}-ndk${{ env.NDK_VERSION }}-linux-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-volta-ccache-v1-qt${{ env.QT_VERSION }}-ndk${{ env.NDK_VERSION }}-linux-
-      - uses: actions/cache/restore@v4
-        with:
-          path: mlinstall
-          key: maplibre-${{ env.MAPLIBRE_COMMIT }}-qt${{ env.QT_VERSION }}-linux-v1
-          fail-on-cache-miss: true
-      - name: VoltaOS holen
-        run: |
-          git init -q upstream && cd upstream
-          git fetch -q --depth 1 "$VOLTA_REPO" "$VOLTA_COMMIT" && git checkout -q FETCH_HEAD
-      - uses: jurplel/install-qt-action@v4
-        with:
-          version: ${{ env.QT_VERSION }}
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-          modules: ${{ env.QT_MODULES }}
-          dir: ${{ runner.temp }}
-          cache: true
-      - name: Pakete
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q ninja-build ccache xvfb libgl1-mesa-dev libegl1-mesa-dev libgl1-mesa-dri libxkbcommon-dev libxkbcommon-x11-0 \
-            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1 libxcb-image0 libxcb-render-util0 libxcb-xinerama0 \
-            libpulse0 libfontconfig1 libdbus-1-3 x11-utils
-      - name: Map proxy startup and log regression tests
-        run: |
-          cmake -S volta-android/tests -B $RUNNER_TEMP/port-tests -DCMAKE_PREFIX_PATH=$RUNNER_TEMP/Qt/$QT_VERSION/gcc_64
-          cmake --build $RUNNER_TEMP/port-tests --parallel 2
-          ctest --test-dir $RUNNER_TEMP/port-tests --output-on-failure
-      - name: Bauen
-        run: |
-          ccache --zero-stats
-          python3 volta-android/port.py upstream
-          B=$RUNNER_TEMP/vbuild
-          cmake -S upstream -B $B -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DVOLTA_PORT_DIR=$PWD/volta-android -DVOLTA_PORT_STAMP=${GITHUB_SHA::8} -DVOLTA_MAPLIBRE_DIR=$PWD/mlinstall 2>&1 | tee cmake.log
-          cmake --build $B 2>&1 | tee build.log | grep -E "error|Error|FAILED|^\[[0-9]+/[0-9]+\] Linking" || true
-          test -x $B/VoltaOS
-      - name: Compiler-Cache Statistik
-        if: always()
-        run: command -v ccache >/dev/null && ccache --show-stats || true
-      - name: Bildschirmfotos
-        run: |
-          B=$RUNNER_TEMP/vbuild
-          mkdir -p out stage/assets stage/third_party
-          cp -r upstream/services stage/
-          for d in radio_logos theater toybox toybox-audio static; do cp -r upstream/assets/$d stage/assets/; done
-          cp -r mlinstall stage/third_party/maplibre
-          ls stage/third_party/maplibre stage/third_party/maplibre/lib stage/third_party/maplibre/plugins/* || true
-          export LD_LIBRARY_PATH=$PWD/mlinstall/lib:$LD_LIBRARY_PATH
-          # Programm allein in einen eigenen Ordner: wie auf Android ohne die Build-Dateien daneben
-          mkdir -p stage/bin && cp $B/VoltaOS stage/bin/
-          shot() { # name breite hoehe wartezeit [umgebung...]
-            n=$1; w=$2; h=$3; ms=$4; shift 4
-            env LIBGL_ALWAYS_SOFTWARE=1 VOLTA_PORT_PROXY=1 VOLTA_DIR=$PWD/stage VOLTA_SHOT=$PWD/out/$n.png:$ms "$@" \
-              timeout $((ms / 1000 + 20)) xvfb-run -a -s "-screen 0 ${w}x${h}x24" $PWD/stage/bin/VoltaOS > out/$n.log 2>&1 || true
-            grep -E "mapproxy|maplibre|MapLibre|geoservices" out/$n.log | head -n 12 || true
-          }
-          shot vorschau_volta_setup 1280 720 12000
-          mkdir -p stage/data && echo 1 > stage/data/setup_done
-          shot vorschau_volta_1920 1920 720 20000
-          shot vorschau_volta_karte 1920 720 40000 VOLTA_PORT_SPLIT=1
-          shot vorschau_volta_karte_1280 1280 720 40000 VOLTA_PORT_SPLIT=1
-          shot vorschau_volta_kamera 1920 720 12000 VOLTA_OPEN=camera
-          shot vorschau_volta_drawer 1920 720 20000 VOLTA_PORT_FAKEAPPS=1 VOLTA_PORT_GRID=1
-          shot vorschau_volta_apps_einstellungen 1920 720 20000 VOLTA_PORT_FAKEAPPS=1 VOLTA_OPEN=settings:App
-          test -s out/vorschau_volta_setup.png
-          if grep -q 'QQmlApplicationEngine failed to load component' out/*.log; then
-            cat out/*.log
-            exit 1
-          fi
-          ls -la out
-      - name: Veröffentlichen
-        if: always()
-        run: |
-          mkdir -p out && cp cmake.log build.log out/ 2>/dev/null || true
-          gh release view volta >/dev/null 2>&1 || gh release create volta --title "Volta OS (Android-Port)" \
-            --notes "Automatischer Build des Android-Ports von VoltaOS (GPL-3.0). Quelle: https://github.com/Omardigio/VoltaOS" --prerelease
-          for f in out/*; do mv "$f" "out/linux_$(basename $f)"; done
-          gh release upload volta out/* --clobber
-
-  # Fahrzeug-Technik aus dem Dashboard W204 (core/, Kotlin): als .jar fuer die Volta-APK
   core:
     runs-on: ubuntu-24.04
     steps:
@@ -245,7 +144,6 @@ jobs:
       matrix:
         include:
           - { qtarch: android_arm64_v8a, name: arm64 }
-          - { qtarch: android_armv7, name: arm32 }
     steps:
       - uses: actions/checkout@v4
       - name: C++ Compiler-Cache
@@ -367,6 +265,19 @@ jobs:
           cp build.log out/android_${{ matrix.name }}_build.log 2>/dev/null || true
           cp volta-${{ matrix.name }}.apk out/ 2>/dev/null || true
           gh release upload volta out/* --clobber
+          # Alte Dateien entfernen, die nicht mehr gebaut werden
+          for old in volta-arm32.apk volta-x86_64.apk android_arm32_build.log android_arm32_cmake.log \
+                     android_x86_64_build.log android_x86_64_cmake.log linux_build.log linux_cmake.log; do
+            gh release delete-asset volta "$old" -y 2>/dev/null || true
+          done
+          gh release view volta --json assets --jq '.assets[].name' | grep -E '^linux_vorschau' | while read -r f; do
+            gh release delete-asset volta "$f" -y || true
+          done
+          # Erst NACH der APK: Volta auf dem Radio erkennt daran den neuen Stand und laedt ihn
+          if [ -s out/volta-${{ matrix.name }}.apk ]; then
+            echo "$GITHUB_SHA" > volta-build.txt
+            gh release upload volta volta-build.txt --clobber
+          fi
 
   # Release-Seite: Versionsnummer, Datum und die letzten Aenderungen
   hinweise:
@@ -384,7 +295,7 @@ jobs:
             echo "Gebaut am $(TZ=Europe/Berlin date '+%d.%m.%Y um %H:%M') (Stand \`${GITHUB_SHA::7}\`)."
             echo "Die Version steht auf dem Radio unter Einstellungen › Apps › Volta OS."
             echo
-            echo "**Für das Radio:** \`volta-arm32.apk\` · für 64-Bit-Geräte: \`volta-arm64.apk\`"
+            echo "**Für das Radio:** \`volta-arm64.apk\`. Ab dieser Version meldet Volta neue Builds selbst und installiert sie mit einem Tipp."
             echo
             echo "### Letzte Änderungen"
             git log -10 --format='- %s (%ad)' --date=format:'%d.%m. %H:%M'
