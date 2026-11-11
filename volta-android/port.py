@@ -1022,3 +1022,25 @@ CAN_MAIN = '''    // Radio-CAN: stille Warnkarten (keine Sprache)
 patch("qml/Main.qml", [
     (r'^    Connections \{\n        target: VoltaUpdate\n', CAN_MAIN, 1),
 ])
+
+# ── Hell/Dunkel nach dem Fahrlicht (Radio-CAN bzw. Lichtsignal des Radios) ──
+patch("qml/Main.qml", [
+    (r'^        if \(uiPrefs\.themeMode === "dark"\)  \{ root\.lightTheme = false; return \}\n',
+     '        if (uiPrefs.themeMode === "dark")  { root.lightTheme = false; return }\n'
+     '        // Android-Port: "Fahrlicht" = dunkel, sobald das Licht am Auto an ist\n'
+     '        if (uiPrefs.themeMode === "lights") { root.lightTheme = !VoltaCan.lightsOn; return }\n', 1),
+    (r'^    function evalTheme\(\) \{\n',
+     '    // kurze Unterfuehrungen nicht sofort umschalten: 3 s warten\n'
+     '    property bool portCarLights: VoltaCan.lightsOn\n'
+     '    onPortCarLightsChanged: if (uiPrefs.themeMode === "lights") portThemeDelay.restart()\n'
+     '    Timer { id: portThemeDelay; interval: 3000; onTriggered: root.evalTheme() }\n'
+     '    function evalTheme() {\n', 1),
+])
+patch("qml/Settings.qml", [
+    (r'options: \[qsTr\("Light"\), qsTr\("Dark"\), qsTr\("Auto"\)\]\n(\s*)current: prefs\.themeMode === "light" \? 0 : \(prefs\.themeMode === "dark" \? 1 : 2\)\n(\s*)onPicked: idx => \{\n(\s*)if \(idx === 2\) \{ autoPopup\.open\(\) \}\n',
+     r'options: [qsTr("Light"), qsTr("Dark"), qsTr("Auto"), qsTr("Car lights")]\n'
+     r'\1current: prefs.themeMode === "light" ? 0 : prefs.themeMode === "dark" ? 1 : prefs.themeMode === "lights" ? 3 : 2\n'
+     r'\2onPicked: idx => {\n'
+     r'\3if (idx === 3) { prefs.themeMode = "lights"; root.themeModeSelected("lights", prefs.autoStart, prefs.autoEnd) }\n'
+     r'\3else if (idx === 2) { autoPopup.open() }\n', 1),
+])

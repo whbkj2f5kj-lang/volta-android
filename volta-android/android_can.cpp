@@ -28,6 +28,7 @@ class VoltaCanQml : public QObject {
     Q_PROPERTY(QString tempLeft READ tempLeft NOTIFY changed)
     Q_PROPERTY(QString tempRight READ tempRight NOTIFY changed)
     Q_PROPERTY(double odometerKm READ odometerKm NOTIFY changed)
+    Q_PROPERTY(bool lightsOn READ lightsOn NOTIFY changed)
 public:
     explicit VoltaCanQml(QObject *parent) : QObject(parent)
     {
@@ -63,6 +64,8 @@ public:
     QString tempRight() const { return temp(v("tempRightRaw")); }
     // Rohwert 1.928.350 entsprach 192.835 km -> Einheit 0,1 km (am Tacho gegenpruefen)
     double odometerKm() const { return v("odometerRaw") / 10.0; }
+    // Fahrlicht: Abblendlicht vom CAN, sonst das Lichtsignal des Radios (sys.qf.vehicle.headlight_state)
+    bool lightsOn() const { return has("lowBeam") ? v("lowBeam") > 0 : v("headlightProp") > 0; }
 
     Q_INVOKABLE bool has(const QString &k) const { return m_seen.value(k).toBool(); }
     Q_INVOKABLE double value(const QString &k) const { return m_values.value(k).toDouble(); }
