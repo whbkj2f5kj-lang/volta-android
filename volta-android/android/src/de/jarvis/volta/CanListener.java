@@ -235,7 +235,9 @@ public final class CanListener {
                 put("washerLow", bit(p, d + 4, 3)); put("wiper", bit(p, d + 4, 2));
                 int speed = u16(p, d + 5);
                 if (speed <= 300) put("speed", speed);
-                put("rpm", u16(p, d + 7));
+                // oberste Bits sind Statusbits (z. B. 0x40 = Motor/Zuendung); 0x42F0 -> 752 U/min Leerlauf
+                put("rpm", u16(p, d + 7) & 0x3FFF);
+                put("rpmFlags", u(p, d + 7) >> 6);
                 put("fuel", u16(p, d + 9));
                 put("rest", u16(p, d + 11));
                 put("odometerRaw", (u(p, d + 13) << 16) | u16(p, d + 14));
