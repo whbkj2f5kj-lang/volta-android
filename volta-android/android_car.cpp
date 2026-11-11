@@ -39,6 +39,8 @@ class VoltaCarQml : public QObject
     Q_PROPERTY(double voltage READ voltage NOTIFY changed)
     Q_PROPERTY(double consumption READ consumption NOTIFY changed)
     Q_PROPERTY(double fuelRate READ fuelRate NOTIFY changed)
+    Q_PROPERTY(int fuel READ fuel NOTIFY changed)
+    Q_PROPERTY(bool fuelEstimated READ fuelEstimated NOTIFY changed)
     Q_PROPERTY(bool engineRunning READ engineRunning NOTIFY changed)
     Q_PROPERTY(QString adapterAddress READ adapterAddress NOTIFY settingsChanged)
     Q_PROPERTY(QString adapterName READ adapterName NOTIFY settingsChanged)
@@ -62,7 +64,7 @@ public:
         // nur fuer die Kontroll-Bildschirmfotos auf Linux
         if (qEnvironmentVariableIsSet("VOLTA_PORT_FAKEAPPS")) {
             m_live = true; m_state = QStringLiteral("DEMO"); m_speed = 87; m_rpm = 1850; m_coolant = 88; m_oil = 92;
-            m_boost = 0.8; m_voltage = 14.1; m_consumption = 5.9; m_engine = true;
+            m_boost = 0.8; m_voltage = 14.1; m_consumption = 5.9; m_fuel = 62; m_fuelRate = 2.4; m_engine = true;
         }
 #endif
     }
@@ -79,6 +81,8 @@ public:
     double voltage() const { return m_voltage; }
     double consumption() const { return m_consumption; }
     double fuelRate() const { return m_fuelRate; }
+    int fuel() const { return m_fuel; }
+    bool fuelEstimated() const { return m_fuelEstimated; }
     bool engineRunning() const { return m_engine; }
     QString adapterAddress() const { return m_address; }
     QString adapterName() const { return m_name; }
@@ -184,6 +188,7 @@ private:
         m_rate = o.value(QLatin1String("rate")).toDouble();
         m_speed = i("speed"); m_rpm = i("rpm"); m_coolant = i("coolant"); m_oil = i("oil");
         m_boost = d("boost"); m_voltage = d("voltage"); m_consumption = d("consumption"); m_fuelRate = d("fuelRate");
+        m_fuel = i("fuel"); m_fuelEstimated = o.value(QLatin1String("fuelEstimated")).toBool();
         m_engine = o.value(QLatin1String("engineRunning")).toBool();
         if (vehicleChanged) emit changed();
         // Diagnostic report rarely changes: poll at most once per second while
@@ -207,7 +212,8 @@ private:
     QString m_address, m_name, m_state = QStringLiteral("IDLE"), m_message;
     bool m_demo = false, m_live = false, m_engine = false;
     double m_rate = 0, m_boost = -1, m_voltage = -1, m_consumption = -1, m_fuelRate = -1;
-    int m_speed = -1, m_rpm = -1, m_coolant = -1, m_oil = -1;
+    int m_speed = -1, m_rpm = -1, m_coolant = -1, m_oil = -1, m_fuel = -1;
+    bool m_fuelEstimated = false;
     QVariantList m_adapters;
     bool m_mercedesBusy = false;
     int m_diagnosticPollCounter = 0;

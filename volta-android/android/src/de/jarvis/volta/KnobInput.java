@@ -38,6 +38,7 @@ public final class KnobInput {
         file = new File(dir != null ? dir : a.getFilesDir(), "volta_keys.txt");
         if (file.length() > 512 * 1024) file.delete();
         log("---- Volta gestartet ----");
+        listenToRadio(a);
         a.runOnUiThread(new Runnable() {
             @Override public void run() {
                 try {
@@ -75,6 +76,66 @@ public final class KnobInput {
                 } catch (Throwable t) { log("Knopf-Eingabe nicht moeglich: " + t); }
             }
         });
+    }
+
+    /**
+     * Zweiter Weg: die Radio-Firmware verteilt Tasten auch ueber android.qf.util.UtilEventManager
+     * (so bekommt z. B. com.qf.ai.bridge sie). Hier NUR mitschreiben, damit wir sehen, ob der Knopf
+     * dort ankommt, falls er Volta nicht als normale Taste erreicht.
+     */
+    private static Object radioListener; // starke Referenz
+    private static void listenToRadio(Activity a) {
+        try {
+            Class<?> mgr = Class.forName("android.qf.util.UtilEventManager");
+            Class<?> lis = Class.forName("android.qf.util.UtilEventListener");
+            StringBuilder sb = new StringBuilder("Radio-Tasten-API:");
+            for (Method m : mgr.getDeclaredMethods()) sb.append(' ').append(m.getName()).append('/').append(m.getParameterTypes().length);
+            log(sb.toString());
+            if (!lis.isInterface()) { log("UtilEventListener ist keine Schnittstelle"); return; }
+            Method reg = null;
+            for (Method m : mgr.getMethods())
+                if (m.getName().equals("RPC_KeyEventChangedListener") && m.getParameterTypes().length == 1) reg = m;
+            if (reg == null) { log("RPC_KeyEventChangedListener fehlt"); return; }
+            Object target = null;
+            if (!java.lang.reflect.Modifier.isStatic(reg.getModifiers())) {
+                for (Method m : mgr.getMethods()) {
+                    if (target != null || !java.lang.reflect.Modifier.isStatic(m.getModifiers()) || m.getReturnType() != mgr) continue;
+                    Class<?>[] p = m.getParameterTypes();
+                    try {
+                        if (p.length == 0) target = m.invoke(null);
+                        else if (p.length == 1 && p[0].isAssignableFrom(android.content.Context.class)) target = m.invoke(null, a.getApplicationContext());
+                    } catch (Throwable ignored) {}
+                }
+                if (target == null) try { target = mgr.getConstructor(android.content.Context.class).newInstance(a.getApplicationContext()); } catch (Throwable ignored) {}
+                if (target == null) try { target = mgr.getConstructor().newInstance(); } catch (Throwable ignored) {}
+                if (target == null) { log("kein UtilEventManager-Objekt"); return; }
+            }
+            radioListener = Proxy.newProxyInstance(lis.getClassLoader(), new Class<?>[]{lis}, new InvocationHandler() {
+                @Override public Object invoke(Object p, Method m, Object[] args) {
+                    String n = m.getName();
+                    if (n.equals("hashCode")) return System.identityHashCode(p);
+                    if (n.equals("equals")) return args != null && args[0] == p;
+                    if (n.equals("toString")) return "VoltaKnob";
+                    StringBuilder sb = new StringBuilder("Radio meldet " + n + ":");
+                    if (args != null) for (Object o : args) {
+                        KeyEvent k = null;
+                        if (o != null) try { Object r = o.getClass().getMethod("getKeyEventInfo").invoke(o); if (r instanceof KeyEvent) k = (KeyEvent) r; } catch (Throwable ignored) {}
+                        if (k != null) sb.append(' ').append(KeyEvent.keyCodeToString(k.getKeyCode())).append(" (").append(k.getKeyCode())
+                                .append(k.getAction() == KeyEvent.ACTION_DOWN ? " gedrueckt)" : " losgelassen)");
+                        else sb.append(' ').append(o);
+                    }
+                    log(sb.toString());
+                    Class<?> rt = m.getReturnType();
+                    return rt == boolean.class ? Boolean.FALSE : rt == int.class ? Integer.valueOf(0) : null;
+                }
+            });
+            reg.invoke(target, radioListener);
+            log("Radio-Tasten: mitlesen angemeldet");
+        } catch (ClassNotFoundException e) {
+            log("Radio-Tasten-API nicht vorhanden: " + e.getMessage());
+        } catch (Throwable t) {
+            log("Radio-Tasten: Anmeldung fehlgeschlagen: " + t);
+        }
     }
 
     private static KeyEvent remap(KeyEvent e) {

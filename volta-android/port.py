@@ -57,6 +57,7 @@ target_sources(VoltaOS PRIVATE
     ${VOLTA_PORT_DIR}/android_update.cpp
     ${VOLTA_PORT_DIR}/android_can.cpp
     ${VOLTA_PORT_DIR}/android_knob.cpp
+    ${VOLTA_PORT_DIR}/android_upload.cpp
     ${VOLTA_PORT_DIR}/volta_mapproxy.cpp
     ${VOLTA_PORT_DIR}/shim/volta_webshim.h)
 target_include_directories(VoltaOS BEFORE PRIVATE
@@ -242,23 +243,23 @@ patch("qml/CarPanel.qml", [
      r'\1    spacing: 10\n'
      r'\1    Repeater {\n'
      r'\1        // feste Liste (nicht bei jedem Wert neu aufbauen); fehlende Werte blenden sich aus\n'
-     r'\1        model: ["rpm", "coolant", "oil", "boost", "voltage", "consumption", "range"]\n'
+     r'\1        model: ["rpm", "coolant", "oil", "boost", "voltage", "consumption", "fuelRate", "fuel", "range"]\n'
      r'\1        Column {\n'
      r'\1            // OBD hat Vorrang; ohne OBD Drehzahl und Reichweite vom Radio-CAN\n'
-     r'\1            readonly property real val: (VoltaCar.live && VoltaCar[modelData] !== undefined) ? VoltaCar[modelData]\n'
+     r'\1            // Verbrauch: im Stand l/h statt l/100 km (wie Jarvis ASD)\n\1            readonly property real val: (modelData === "fuelRate" && (!VoltaCar.live || VoltaCar.consumption >= 0)) ? -1\n\1                : (VoltaCar.live && VoltaCar[modelData] !== undefined) ? VoltaCar[modelData]\n'
      r'\1                : ((modelData === "rpm" || modelData === "range") && VoltaCan.connected && VoltaCan.seen[modelData] === true ? VoltaCan.values[modelData] : -1)\n'
      r'\1            readonly property bool warn: (modelData === "rpm" && val > 4200) || (modelData === "coolant" && val >= 108)\n'
-     r'\1                                         || (modelData === "oil" && val >= 125) || (modelData === "voltage" && val >= 0 && val < 11.8)\n'
+     r'\1                                         || (modelData === "oil" && val >= 125) || (modelData === "voltage" && val >= 0 && val < 11.8)\n\1                                         || (modelData === "fuel" && val >= 0 && val < 12)\n'
      r'\1            readonly property bool cold: (modelData === "coolant" || modelData === "oil") && val >= 0 && val < 60\n'
      r'\1            visible: val >= 0\n'
      r'\1            spacing: -1\n'
      r'\1            Text {\n'
-     r'\1                text: Number(parent.val).toFixed(modelData === "boost" || modelData === "voltage" || modelData === "consumption" ? 1 : 0)\n'
+     r'\1                text: Number(parent.val).toFixed(modelData === "boost" || modelData === "voltage" || modelData === "consumption" || modelData === "fuelRate" ? 1 : 0)\n'
      r'\1                color: parent.warn ? "#ED4E3B" : parent.cold ? "#A8C3F4" : (carPanel._lt ? "#171717" : "#F0F0F0")\n'
      r'\1                font.pixelSize: 26; font.weight: Font.Light\n'
      r'\1            }\n'
      r'\1            Text {\n'
-     r'\1                text: ({ rpm: "RPM", coolant: "COOLANT °C", oil: "OIL °C", boost: "BOOST BAR", voltage: "BATTERY V", consumption: "L/100 KM", range: "RANGE KM" })[modelData]\n'
+     r'\1                text: ({ rpm: "RPM", coolant: "COOLANT °C", oil: "OIL °C", boost: "BOOST BAR", voltage: "BATTERY V", consumption: (VoltaCar.fuelEstimated ? "≈ " : "") + "L/100 KM", fuelRate: (VoltaCar.fuelEstimated ? "≈ " : "") + "L/H", fuel: "FUEL %", range: "RANGE KM" })[modelData]\n'
      r'\1                color: "#757575"; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 1\n'
      r'\1            }\n'
      r'\1        }\n'
@@ -839,6 +840,29 @@ patch("qml/Settings.qml", [
 \1TDivider {}
 \1SectionTitle { title: qsTr("OBD adapter") }''', 1),
 ])
+# Diagnose-Logs automatisch hochladen (privates GitHub-Repo), Schluessel aus der Zwischenablage
+patch("qml/Settings.qml", [
+    (r'^([ \t]*)SectionTitle \{ title: qsTr\("OBD adapter"\) \}',
+     r"""\1SectionTitle { title: qsTr("Upload diagnostics") }
+\1Item {
+\1    width: parent.width; height: 46
+\1    Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: qsTr("Upload logs automatically"); font.pixelSize: 15; color: root.txt }
+\1    TToggle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; checked: VoltaUpload.enabled; onToggled: on => VoltaUpload.setEnabled(on) }
+\1}
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
+\1    text: qsTr("Every 5 minutes the changed log files go to the PRIVATE repo ") + VoltaUpload.repo + qsTr(". Key: ") + (VoltaUpload.hasToken ? qsTr("saved") : qsTr("missing – copy it, then tap the button"))
+\1}
+\1Flow {
+\1    width: parent.width; spacing: 8
+\1    TSecondary { label: qsTr("Key from clipboard"); onClicked: VoltaUpload.tokenFromClipboard() }
+\1    TSecondary { label: qsTr("Upload now"); onClicked: VoltaUpload.uploadNow() }
+\1    TSecondary { label: qsTr("Delete key"); visible: VoltaUpload.hasToken; onClicked: VoltaUpload.clearToken() }
+\1}
+\1Text { width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint; text: VoltaUpload.status }
+\1TDivider {}
+\1SectionTitle { title: qsTr("OBD adapter") }""", 1),
+])
 patch("qml/CameraApp.qml", [
     (r'^import VoltaApp 1\.0$', 'import VoltaApp 1.0\nimport VoltaPort 1.0\nimport QtQuick.Window', 1),
     (r'    property bool active: false', '''    property bool active: false
@@ -960,8 +984,24 @@ CAN_PANEL = r'''\1// Android-Port: Tueren, Kofferraum und Haube folgen dem echte
 \1        var key = "" + l + r + t + h
 \1        if (key === portDoorKey) return
 \1        portDoorKey = key
+\1        console.log("[can] 3D-Auto Tueren links/rechts/Kofferraum/Haube:", key, "Auto geladen:", car3DView.userCarActive)
 \1        car3DView.doorLeftOpen = l; car3DView.doorRightOpen = r
 \1        car3DView.trunkOpen = t; car3DView.hoodOpen = h
+\1    }
+\1}
+\1// Raeder drehen mit dem echten Tempo (Radumfang W204 ~2 m). Ueber ~8 km/h begrenzt,
+\1// sonst flimmern die Speichen (Wagenrad-Effekt). Rueckwaerts drehen sie andersherum.
+\1Timer {
+\1    id: portWheelTimer
+\1    interval: 33; repeat: true
+\1    running: car3DView.visible && speedCluster.portShownKmh > 0.5
+\1    property double portLast: 0
+\1    onRunningChanged: portLast = Date.now()
+\1    onTriggered: {
+\1        var now = Date.now(), dt = Math.min(0.2, (now - portLast) / 1000); portLast = now
+\1        var rps = Math.min(speedCluster.portShownKmh / 3.6 / 2.0, 1.1)
+\1        var dir = VoltaCan.reverse ? -1 : 1
+\1        car3DView.wheelSpin = (car3DView.wheelSpin + dir * rps * 360 * dt + 360) % 360
 \1    }
 \1}
 \1// Einparkhilfe (Radio-CAN): Balken vorne und hinten, nur wenn das Auto Werte liefert

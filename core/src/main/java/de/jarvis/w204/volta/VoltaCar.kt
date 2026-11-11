@@ -118,11 +118,10 @@ object VoltaCar {
         v.load?.let { o.put("load", it) }
         v.exhaustTemp?.let { o.put("exhaust", it) }
         v.fuelLevel?.let { o.put("fuel", it) }
-        v.fuelRate?.let { rate ->
-            o.put("fuelRate", rate)
-            val kmh = v.speed ?: 0
-            if (kmh >= 5) o.put("consumption", rate / kmh * 100.0)
-        }
+        // wie Jarvis ASD: Verbrauch direkt (PID 5E) oder geschaetzt aus Luftmasse und Lambda
+        v.fuelRateEff?.let { o.put("fuelRate", it) }
+        v.consumption?.let { o.put("consumption", it) }
+        o.put("fuelEstimated", v.fuelEstimated)
         o.put("engineRunning", v.engineRunning)
         return o.toString()
     }
