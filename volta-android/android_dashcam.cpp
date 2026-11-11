@@ -6,6 +6,8 @@
 #include <QObject>
 #include <QQmlEngine>
 #include <QTimer>
+#include <QJsonArray>
+#include <QVariantList>
 #ifdef Q_OS_ANDROID
 #include <QJniEnvironment>
 #include <QJniObject>
@@ -29,6 +31,11 @@ class VoltaDashcamQml final : public QObject
     Q_PROPERTY(QString status READ status NOTIFY changed)
     Q_PROPERTY(int fps READ fps NOTIFY changed)
     Q_PROPERTY(int savedCount READ savedCount NOTIFY changed)
+    // Kameraquelle wie in ASD: 0 Automatisch, 1 Android-Kamera, 2 USB direkt
+    Q_PROPERTY(int source READ source NOTIFY changed)
+    Q_PROPERTY(int cameraIndex READ cameraIndex NOTIFY changed)
+    Q_PROPERTY(QString active READ active NOTIFY changed)
+    Q_PROPERTY(QVariantList androidCameras READ androidCameras NOTIFY changed)
 public:
     explicit VoltaDashcamQml(QObject *parent) : QObject(parent)
     {
@@ -41,6 +48,7 @@ public:
         connect(&m_timer, &QTimer::timeout, this, &VoltaDashcamQml::poll);
         m_timer.start();
         QTimer::singleShot(100, this, &VoltaDashcamQml::poll);
+        QTimer::singleShot(200, this, &VoltaDashcamQml::refreshCameras);
     }
 
     bool enabled() const { return m_enabled; }
@@ -52,6 +60,34 @@ public:
     QString status() const { return m_status; }
     int fps() const { return m_fps; }
     int savedCount() const { return m_saved; }
+    int source() const { return m_source; }
+    int cameraIndex() const { return m_cameraIndex; }
+    QString active() const { return m_active; }
+    QVariantList androidCameras() const { return m_cameras; }
+
+    Q_INVOKABLE void setSource(int v) { setInt("setSource", v); m_source = v; emit changed(); }
+    Q_INVOKABLE void setCameraIndex(int v) { setInt("setCameraIndex", v); m_cameraIndex = v; emit changed(); }
+    /** Liste der Android-Kameras neu lesen (z. B. beim Oeffnen der Einstellungen). */
+    Q_INVOKABLE void refreshCameras()
+    {
+#ifdef Q_OS_ANDROID
+        QJniEnvironment env;
+        const QString raw = QJniObject::callStaticObjectMethod(kDash, "androidCameras",
+            "(Landroid/content/Context;)Ljava/lang/String;", context().object()).toString();
+        if (env.checkAndClearExceptions()) return;
+        QVariantList list;
+        const QJsonArray arr = QJsonDocument::fromJson(raw.toUtf8()).array();
+        for (int i = 0; i < arr.size(); ++i) {
+            const QJsonObject o = arr.at(i).toObject();
+            list << QStringLiteral("Kamera %1 (ID %2, %3)").arg(i + 1).arg(o.value("id").toString(), o.value("facing").toString());
+        }
+        if (list != m_cameras) {
+            m_cameras = list;
+            qInfo().noquote() << "[dashcam] Android-Kameras:" << (list.isEmpty() ? QStringLiteral("keine") : list.join(QStringLiteral(", ")));
+            emit changed();
+        }
+#endif
+    }
 
     Q_INVOKABLE void setEnabled(bool on)
     {
@@ -93,6 +129,15 @@ public:
 signals:
     void changed();
 private:
+    void setInt(const char *name, int v) {
+#ifdef Q_OS_ANDROID
+        QJniEnvironment env;
+        QJniObject::callStaticMethod<void>(kDash, name, "(Landroid/content/Context;I)V", context().object(), jint(v));
+        env.checkAndClearExceptions();
+#else
+        Q_UNUSED(name); Q_UNUSED(v);
+#endif
+    }
     void setFlag(const char *name, bool on) {
 #ifdef Q_OS_ANDROID
         QJniEnvironment env;
@@ -119,6 +164,14 @@ private:
         const QString st = obj.value("status").toString();
         const int fps = obj.value("fps").toInt();
         const int saved = obj.value("savedCount").toInt();
+        const int src = obj.value("source").toInt();
+        const int idx = obj.value("cameraIndex").toInt();
+        const QString act = obj.value("active").toString();
+        if (src != m_source || idx != m_cameraIndex || act != m_active) {
+            if (act != m_active && !act.isEmpty()) qInfo().noquote() << "[dashcam] Quelle:" << act;
+            m_source = src; m_cameraIndex = idx; m_active = act;
+            emit changed();
+        }
         const QString view = QStringLiteral("open=%1 frames=%2 preview=%3 %4")
             .arg(obj.value("cameraOpen").toBool()).arg(obj.value("frames").toBool())
             .arg(obj.value("preview").toBool()).arg(obj.value("frameSize").toString());
@@ -143,6 +196,9 @@ private:
     QString m_signStatus = QStringLiteral("Warte auf Kamera");
     double m_signFps = 0;
     int m_fps = 0, m_saved = 0;
+    int m_source = 0, m_cameraIndex = 0;
+    QString m_active;
+    QVariantList m_cameras;
     QString m_status = QStringLiteral("Aus");
 };
 }

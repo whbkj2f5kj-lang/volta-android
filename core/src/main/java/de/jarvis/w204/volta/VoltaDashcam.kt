@@ -46,6 +46,7 @@ object VoltaDashcam {
     @Volatile private var recordingEnabled = true
     @Volatile private var signsEnabled = true
     @Volatile private var lastFrameAt = 0L
+    @Volatile private var lastSignOffer = 0L
     private var visionRecovered = false
     @Volatile private var frameWidth = 640
     @Volatile private var frameHeight = 480
@@ -56,6 +57,13 @@ object VoltaDashcam {
     private var recorder: Dashcam? = null
     private var previewVisible = false
     private val open = AtomicBoolean(false)
+    /** Wie ASD: 0 = Automatisch (USB, sonst Android-Kamera), 1 = Android-Kamera, 2 = USB direkt. */
+    @Volatile private var source = 0
+    /** Android-Kamera Nummer (0 = "Kamera 1"); in ASD funktionierte "Kamera 3" = 2. */
+    @Volatile private var cameraIndex = 0
+    @Volatile private var active = ""
+    private var camera2: VoltaCamera2? = null
+    private var usbFallback: Runnable? = null
 
     private fun UsbDevice.uvc(): Boolean =
         deviceClass == UsbConstants.USB_CLASS_VIDEO ||
@@ -70,6 +78,8 @@ object VoltaDashcam {
         enabled = prefs.getBoolean("enabled", false)
         recordingEnabled = prefs.getBoolean("recording", true)
         signsEnabled = prefs.getBoolean("signs", true)
+        source = prefs.getInt("source", 0)
+        cameraIndex = prefs.getInt("cameraIndex", 0)
         if (prefs.getBoolean("vision_guard", false)) {
             visionRecovered = true
             signsEnabled = false
@@ -115,6 +125,33 @@ object VoltaDashcam {
     }
 
     @JvmStatic
+    fun setSource(context: Context, value: Int) {
+        source = value.coerceIn(0, 2)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt("source", source).apply()
+        restart(context)
+    }
+
+    @JvmStatic
+    fun setCameraIndex(context: Context, value: Int) {
+        cameraIndex = value.coerceAtLeast(0)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt("cameraIndex", cameraIndex).apply()
+        restart(context)
+    }
+
+    private fun restart(context: Context) {
+        ui.post { val a = context as? Activity ?: activity; if (enabled && a != null) startCamera(a) }
+    }
+
+    /** Kameras, die Android meldet (Reihenfolge wie "Kamera 1, 2, 3" in ASD). */
+    @JvmStatic
+    fun androidCameras(context: Context): String {
+        val arr = JSONArray()
+        for (id in VoltaCamera2.cameraIds(context))
+            arr.put(JSONObject().put("id", id).put("facing", VoltaCamera2.describe(context, id)))
+        return arr.toString()
+    }
+
+    @JvmStatic
     fun protect() { if (enabled) recorder?.protect("Manuell gesichert") }
 
     @JvmStatic
@@ -127,10 +164,13 @@ object VoltaDashcam {
             .put("frames", lastFrameAt > 0 && SystemClock.elapsedRealtime() - lastFrameAt < 3000)
             .put("frameSize", "${frameWidth}x$frameHeight")
             .put("recordingEnabled", recordingEnabled)
+            .put("source", source)
+            .put("cameraIndex", cameraIndex)
+            .put("active", active)
             .put("signsEnabled", signsEnabled)
             .put("signStatus", if (visionRecovered && !signsEnabled) "Letzte Bildanalyse-Initialisierung unterbrochen; erneut aktivieren" else if (!signsEnabled) "Schildererkennung aus" else if (!enabled || !cameraOpen || SystemClock.elapsedRealtime() - lastFrameAt > 3000) "Warte auf Kamerabild" else VoltaSignProcessor.status)
             .put("signFps", VoltaSignProcessor.fps)
-            .put("status", if (cameraOpen && SystemClock.elapsedRealtime() - lastFrameAt > 3000) "Warte auf aktuelles USB-Kamerabild" else state)
+            .put("status", if (cameraOpen && SystemClock.elapsedRealtime() - lastFrameAt > 3000) (if (camera2 != null) "Warte auf aktuelles Kamerabild" else "Warte auf aktuelles USB-Kamerabild") else state)
             .put("recording", st?.recording == true)
             .put("fps", st?.fps ?: 0)
             .put("size", st?.size ?: "")
@@ -188,6 +228,9 @@ object VoltaDashcam {
 
     private fun stopCamera() {
         permissionWait?.let { ui.removeCallbacks(it) }; permissionWait = null
+        usbFallback?.let { ui.removeCallbacks(it) }; usbFallback = null
+        camera2?.close(); camera2 = null
+        active = ""
         lastFrameAt = 0L
         VoltaLimits.clearCamera()
         open.set(false)
@@ -217,23 +260,42 @@ object VoltaDashcam {
 
     private fun startCamera(a: Activity) {
         stopCamera()
-        val manager = a.getSystemService(UsbManager::class.java)
-        val devices = manager?.deviceList?.values.orEmpty().filter { it.uvc() }
-        if (devices.isEmpty()) { state = "Keine USB-UVC-Kamera gefunden"; return }
-        val cam = devices.first()
         if (a.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             state = "Bitte Kamera-Berechtigung erlauben"
             a.requestPermissions(arrayOf(Manifest.permission.CAMERA), 2381)
             waitForPermissions(a, false)
             return
         }
-        if (cam.audio() && a.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            state = "USB-Kamera mit Mikrofon: Mikrofon-Berechtigung für USB-Zugriff erforderlich"
-            a.requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 2382)
-            waitForPermissions(a, true)
+        val manager = a.getSystemService(UsbManager::class.java)
+        val devices = manager?.deviceList?.values.orEmpty().filter { it.uvc() }
+        val androidIds = VoltaCamera2.cameraIds(a)
+        val useUsb = when (source) { 1 -> false; 2 -> true; else -> devices.isNotEmpty() }
+        if (!useUsb) {
+            if (androidIds.isEmpty()) {
+                state = if (devices.isEmpty()) "Keine Kamera gefunden (weder Android-Kamera noch USB-UVC)"
+                        else "Android meldet keine Kamera – Quelle „USB direkt“ wählen"
+                return
+            }
+            startAndroid(a, androidIds, cameraIndex)
             return
         }
-        state = "Öffne USB-Kamera …"
+        if (devices.isEmpty()) { state = "Keine USB-UVC-Kamera gefunden" + if (androidIds.isNotEmpty()) " – Quelle „Android-Kamera“ wählen" else ""; return }
+        startUsb(a, devices.first(), source == 0 && androidIds.isNotEmpty())
+    }
+
+    /** Automatisch: klappt USB direkt nicht, auf die Android-Kamera wechseln (wie in ASD von Hand). */
+    private fun fallBackToAndroid(a: Activity, why: String) {
+        ui.post {
+            if (!enabled || source != 0) return@post
+            val ids = VoltaCamera2.cameraIds(a)
+            if (ids.isEmpty()) return@post
+            stopCamera()
+            startAndroid(a, ids, cameraIndex)
+            state = "USB direkt ging nicht ($why) – " + state
+        }
+    }
+
+    private fun previewView(a: Activity): TextureView {
         val v = TextureView(a)
         v.isClickable = false
         v.isFocusable = false
@@ -241,6 +303,67 @@ object VoltaDashcam {
         a.findViewById<FrameLayout>(android.R.id.content)?.addView(v,
             FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.LEFT))
         texture = v
+        return v
+    }
+
+    private fun startAndroid(a: Activity, ids: List<String>, index: Int) {
+        val i = index.coerceIn(0, ids.lastIndex)
+        val id = ids[i]
+        active = "Android-Kamera ${i + 1} (ID $id)"
+        state = "Öffne $active …"
+        val v = previewView(a)
+        lateinit var cam: VoltaCamera2
+        cam = VoltaCamera2(a.applicationContext, id,
+            onState = { s -> if (camera2 === cam) state = s.replace("Android-Kamera $id", active) },
+            onOpen = open@{ w, h ->
+                if (camera2 !== cam) return@open
+                frameWidth = w; frameHeight = h
+                open.set(true); cameraOpen = true
+            },
+            wants = {
+                // jedes Bild zaehlt als Lebenszeichen (Vorschau, Tempolimit-Quelle), umgerechnet wird nur bei Bedarf
+                if (camera2 === cam && enabled) { val t = SystemClock.elapsedRealtime(); lastFrameAt = t; VoltaLimits.cameraFrame(t) }
+                camera2 === cam && enabled &&
+                    ((signsEnabled && SystemClock.elapsedRealtime() - lastSignOffer >= 150) ||
+                        (recordingEnabled && recorder?.wantsFrame() == true))
+            },
+            onFrame = frame@{ bmp ->
+                if (camera2 !== cam || !enabled) { bmp.recycle(); return@frame }
+                val now = SystemClock.elapsedRealtime()
+                if (signsEnabled && now - lastSignOffer >= 150) {
+                    lastSignOffer = now
+                    val buf = java.nio.ByteBuffer.allocateDirect(bmp.byteCount)
+                    bmp.copyPixelsToBuffer(buf); buf.rewind()
+                    VoltaSignProcessor.offer(buf, bmp.width, bmp.height)
+                }
+                val rec = recorder
+                if (rec != null && recordingEnabled && rec.wantsFrame()) rec.offer(bmp) else bmp.recycle()
+            },
+            onClosed = closed@{ s ->
+                if (camera2 !== cam) return@closed
+                cameraOpen = false; open.set(false); VoltaLimits.clearCamera()
+                state = s
+            })
+        camera2 = cam
+        v.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(st: SurfaceTexture, width: Int, height: Int) { if (camera2 === cam) cam.setPreview(st) }
+            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
+            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean { if (camera2 === cam) cam.setPreview(null); return true }
+            override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+        }
+        cam.open()
+    }
+
+    private fun startUsb(a: Activity, cam: UsbDevice, autoFallback: Boolean) {
+        active = "USB direkt"
+        if (cam.audio() && a.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            state = "USB-Kamera mit Mikrofon: Mikrofon-Berechtigung für USB-Zugriff erforderlich"
+            a.requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 2382)
+            waitForPermissions(a, true)
+            return
+        }
+        state = "Öffne USB-Kamera …"
+        val v = previewView(a)
         val c: ICameraHelper = CameraHelper()
         helper = c
         var candidates: List<Size> = emptyList()
@@ -316,7 +439,11 @@ object VoltaDashcam {
             override fun onDetach(device: UsbDevice) {
                 if (helper === c && device.uvc()) { cameraOpen = false; state = "USB-Kamera getrennt"; VoltaLimits.clearCamera() }
             }
-            override fun onCancel(device: UsbDevice) { if (helper !== c) return; state = "USB-Kamera-Zugriff nicht erlaubt" }
+            override fun onCancel(device: UsbDevice) {
+                if (helper !== c) return
+                state = "USB-Kamera-Zugriff nicht erlaubt"
+                if (autoFallback) fallBackToAndroid(a, "Zugriff nicht erlaubt")
+            }
             override fun onError(device: UsbDevice?, e: CameraException?) {
                 if (!enabled || helper !== c) return
                 if (!open.get() && attempt < candidates.size) {
@@ -325,6 +452,7 @@ object VoltaDashcam {
                     return
                 }
                 state = "USB-Kamera-Fehler: ${e?.message ?: "unbekannt"}"
+                if (autoFallback) fallBackToAndroid(a, e?.message ?: "Fehler")
             }
         })
         // Wie in Jarvis: das Geraet wird ueber onAttach ausgewaehlt. Nur falls das ausbleibt,
@@ -335,5 +463,14 @@ object VoltaDashcam {
                 runCatching { c.selectDevice(cam) }
             }
         }, 2500)
+        // Automatisch: nach 10 s ohne Bild auf die Android-Kamera wechseln
+        if (autoFallback) {
+            val fb = Runnable {
+                if (enabled && helper === c && (lastFrameAt == 0L || SystemClock.elapsedRealtime() - lastFrameAt > 3000))
+                    fallBackToAndroid(a, "kein Bild nach 10 s")
+            }
+            usbFallback = fb
+            ui.postDelayed(fb, 10_000)
+        }
     }
 }

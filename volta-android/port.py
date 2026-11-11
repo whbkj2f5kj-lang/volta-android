@@ -779,6 +779,37 @@ patch("qml/Settings.qml", [
 \1    TToggle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; checked: VoltaDashcam.signsEnabled; onToggled: on => VoltaDashcam.setSignsEnabled(on) }
 \1}
 \1Text { width: parent.width; text: VoltaDashcam.signStatus; color: root.txtHint; wrapMode: Text.WordWrap; font.pixelSize: 12 }
+\1Text { width: parent.width; text: qsTr("Camera source"); color: root.txt; font.pixelSize: 15; topPadding: 6 }
+\1Flow {
+\1    width: parent.width; spacing: 8
+\1    Repeater {
+\1        model: [qsTr("Automatic"), qsTr("Android camera"), qsTr("USB direct")]
+\1        TSecondary {
+\1            label: (VoltaDashcam.source === index ? "● " : "") + modelData
+\1            onClicked: VoltaDashcam.setSource(index)
+\1        }
+\1    }
+\1}
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
+\1    text: VoltaDashcam.androidCameras.length === 0 ? qsTr("Android cameras: none") : qsTr("Android camera (like Jarvis: pick the number that shows the picture):")
+\1}
+\1Flow {
+\1    width: parent.width; spacing: 8
+\1    Component.onCompleted: VoltaDashcam.refreshCameras()
+\1    Repeater {
+\1        model: VoltaDashcam.androidCameras
+\1        TSecondary {
+\1            label: (VoltaDashcam.cameraIndex === index ? "● " : "") + modelData
+\1            onClicked: { VoltaDashcam.setCameraIndex(index); if (VoltaDashcam.source === 2) VoltaDashcam.setSource(1) }
+\1        }
+\1    }
+\1}
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
+\1    visible: VoltaDashcam.active !== ""
+\1    text: qsTr("Active: ") + VoltaDashcam.active
+\1}
 \1TSecondary {
 \1    label: qsTr("Open camera preview")
 \1    onClicked: if (root.hostWindow) {
