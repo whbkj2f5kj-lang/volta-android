@@ -60,7 +60,13 @@ public final class CanListener {
         logSettings(app);
         registerBroadcasts(app);
         bind(app);
+        McuTap.start(app);
     }
+
+    /** fuer McuTap: in dieselbe Datei schreiben, Aenderungen je Schluessel. */
+    static void logLine(String s) { log(s); }
+    static void logFrame(String key, String kind, byte[] data) { frameKeyed(key, kind, data); }
+    static void putValue(String k, double v) { put(k, v); }
 
     private static synchronized void log(String s) {
         if (file == null || lines > 20000) return;
@@ -82,6 +88,10 @@ public final class CanListener {
         String key = kind;
         if (data != null && data.length > 0) key += ":" + String.format("%02X", data[0]) + (data.length > 1 ? String.format("%02X", data[1]) : "")
                 + (data.length > 2 ? String.format("%02X", data[2]) : "");
+        frameKeyed(key, kind, data);
+    }
+
+    private static void frameKeyed(String key, String kind, byte[] data) {
         String h = hex(data);
         synchronized (last) {
             if (h.equals(last.get(key))) return;
