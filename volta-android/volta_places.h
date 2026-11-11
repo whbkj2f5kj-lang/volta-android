@@ -193,8 +193,11 @@ class Services : public QObject {
     void pump() {
         while (active < 4 && !queue.isEmpty()) {
             int index = -1;
-            for (int i=0;i<queue.size();++i) if (!queue[i].osm) { index=i; break; }
-            if (index < 0 && activeOsm < 2) index=0;
+            for (int i=0;i<queue.size();++i) if (queue[i].key.startsWith("search-")) { index=i; break; }
+            if(index<0) for(int i=0;i<queue.size();++i) if(queue[i].key.startsWith("reverse-")) {index=i;break;}
+            // Background tiles/radar must leave two slots available for destinations.
+            if(index<0 && active>=2) return;
+            if(index<0) for(int i=0;i<queue.size();++i) if(!queue[i].osm || activeOsm<2){index=i;break;}
             if (index < 0) return;
             Job job=queue.takeAt(index); ++active; if(job.osm) ++activeOsm;
             QNetworkRequest req(job.url); req.setTransferTimeout(job.osm ? 12000 : 8000);
@@ -227,8 +230,12 @@ class Services : public QObject {
     void request(const QString &key, const QUrl &url, const QByteArray &post, int ttl, const Done &done, bool osm=false, bool png=false) {
         const auto hit=cached(key,ttl); if(!hit.isEmpty()) { done(200,hit); return; }
         if(waiters.contains(key)) { if(waiters[key].size()<32) waiters[key].append(done); else done(503,{}); return; }
-        if (waiters.size()>=36 || QDateTime::currentSecsSinceEpoch()-failedAt.value(key,0)<60) { done(503,{}); return; }
-        waiters[key]={done}; queue.enqueue({key,url,post,osm,png}); pump();
+        const bool interactive=key.startsWith("search-")||key.startsWith("reverse-");
+        if (waiters.size()>=(interactive ? 36 : 24) || QDateTime::currentSecsSinceEpoch()-failedAt.value(key,0)<60) { done(503,{}); return; }
+        waiters[key]={done};
+        const Job job{key,url,post,osm,png};
+        if(interactive) queue.prepend(job);else queue.enqueue(job);
+        pump();
     }
     static void send(const Socket &s,int status,const QByteArray &bytes,const QByteArray &mime="application/json") {
         if(!s || s->state()!=QAbstractSocket::ConnectedState) return;

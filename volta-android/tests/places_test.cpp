@@ -6,10 +6,10 @@
 class ProviderReply : public QNetworkReply {
     QByteArray data; qint64 offset=0;
 public:
-    ProviderReply(const QNetworkRequest &req,int code,QByteArray body,QObject *parent):QNetworkReply(parent),data(body) {
+    ProviderReply(const QNetworkRequest &req,int code,QByteArray body,QObject *parent,bool hold=false):QNetworkReply(parent),data(body) {
         setRequest(req);setUrl(req.url());setAttribute(QNetworkRequest::HttpStatusCodeAttribute,code);
         open(QIODevice::ReadOnly|QIODevice::Unbuffered);
-        QTimer::singleShot(0,this,[this,code](){if(code!=200)setError(ContentAccessDenied,"fake error");setFinished(true);emit readyRead();emit finished();});
+        if(!hold) QTimer::singleShot(0,this,[this,code](){if(code!=200)setError(ContentAccessDenied,"fake error");setFinished(true);emit readyRead();emit finished();});
     }
     void abort() override {}
     qint64 bytesAvailable() const override{return data.size()-offset+QNetworkReply::bytesAvailable();}
@@ -21,7 +21,7 @@ public:
     int osmStatus=200,tomtomStatus=200,metadataStatus=200;
     int age=300;
     QString framePath="/v2/radar/9dc50f8b55ef";
-    bool html=false,remark=false;
+    bool html=false,remark=false,holdBackground=false;
     QByteArray osm=R"({"elements":[
         {"type":"node","id":1,"lat":52.5201,"lon":13.4041,"tags":{"amenity":"fuel","name":"Sample Fuel"}},
         {"type":"way","id":2,"center":{"lat":52.5201,"lon":13.40415},"tags":{"amenity":"restaurant","cuisine":"pizza","name":"Sample Pizza"}},
@@ -47,7 +47,7 @@ protected:
         } else if(host=="tilecache.rainviewer.com"||host=="tile.openweathermap.org")data=png;
         else data=R"({"version":8,"sources":{},"layers":[{"id":"label","type":"symbol"}]})";
         if(html)data="<html>provider error</html>";
-        return new ProviderReply(r,code,data,this);
+        return new ProviderReply(r,code,data,this,holdBackground && host.contains("overpass"));
     }
 };
 class PlacesTest : public QObject {
@@ -112,6 +112,14 @@ private slots:
         QCOMPARE(get(p,"/reverse-geocode?lat=52.52&lon=13.4").status,503);QVERIFY(net.urls.isEmpty());
         qputenv("TOMTOM_KEY","dummy-tomtom-key");
         QCOMPARE(get(p,"/poi-search?q=Berlin&lat=52.52&lon=13.4").array().size(),1);
+    }
+    void stalledBackgroundTilesLeaveSearchCapacityAvailable() {
+        qputenv("TOMTOM_KEY","dummy-tomtom-key");QTemporaryDir dir;Providers net;net.holdBackground=true;MapProxy p(nullptr,&net,dir.path(),0);
+        auto result=get(p,"/map-pois?s=52.5&w=13.3&n=52.6&e=13.5");
+        QVERIFY(result.object()["pending"].toInt()>2);QCOMPARE(net.urls.size(),2);
+        result=get(p,"/poi-search?q=Berlin&lat=52.52&lon=13.4");
+        QCOMPARE(result.status,200);QCOMPARE(result.array().size(),1);QCOMPARE(net.urls.size(),3);
+        QCOMPARE(net.urls.last().host(),"api.tomtom.com");
     }
     void searchEscapesTextAndKeepsLongDistanceDestinationsPossible() {
         qputenv("TOMTOM_KEY","dummy-tomtom-key");QTemporaryDir dir;Providers net;MapProxy p(nullptr,&net,dir.path(),0);
