@@ -122,6 +122,8 @@ private:
         if (e != m_enabled || r != m_recording || st != m_status || fps != m_fps || saved != m_saved ||
             recEnabled != m_recordingEnabled || signsEnabled != m_signsEnabled || signStatus != m_signStatus || signFps != m_signFps) {
             m_enabled = e; m_recording = r; m_status = st; m_fps = fps; m_saved = saved;
+            m_recordingEnabled = recEnabled; m_signsEnabled = signsEnabled;
+            m_signStatus = signStatus; m_signFps = signFps;
             emit changed();
         }
 #endif
