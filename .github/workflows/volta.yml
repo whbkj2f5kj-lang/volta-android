@@ -167,7 +167,12 @@ jobs:
         with: { name: corelibs, path: volta-android/android/libs }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
-      - uses: jurplel/install-qt-action@v4
+      # Qt: normal in ~1 Minute (Zwischenspeicher). Haengt Zwischenspeicher oder Qt-Server, nach 8 Minuten
+      # abbrechen und ohne Zwischenspeicher ueber einen anderen Qt-Spiegelserver neu laden.
+      - id: qtdesk
+        uses: jurplel/install-qt-action@v4
+        timeout-minutes: 8
+        continue-on-error: true
         with:
           version: ${{ env.QT_VERSION }}
           host: linux
@@ -176,7 +181,23 @@ jobs:
           modules: ${{ env.QT_MODULES }}
           dir: ${{ runner.temp }}
           cache: true
-      - uses: jurplel/install-qt-action@v4
+      - name: Qt Desktop (Ersatzserver)
+        if: steps.qtdesk.outcome != 'success'
+        uses: jurplel/install-qt-action@v4
+        timeout-minutes: 20
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: ${{ env.QT_MODULES }}
+          dir: ${{ runner.temp }}
+          cache: false
+          extra: --base https://mirrors.ocf.berkeley.edu/qt/
+      - id: qtandroid
+        uses: jurplel/install-qt-action@v4
+        timeout-minutes: 8
+        continue-on-error: true
         with:
           version: ${{ env.QT_VERSION }}
           host: all_os
@@ -185,6 +206,19 @@ jobs:
           modules: ${{ env.QT_MODULES }} qtwebview
           dir: ${{ runner.temp }}
           cache: true
+      - name: Qt Android (Ersatzserver)
+        if: steps.qtandroid.outcome != 'success'
+        uses: jurplel/install-qt-action@v4
+        timeout-minutes: 20
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: all_os
+          target: android
+          arch: ${{ matrix.qtarch }}
+          modules: ${{ env.QT_MODULES }} qtwebview
+          dir: ${{ runner.temp }}
+          cache: false
+          extra: --base https://mirrors.ocf.berkeley.edu/qt/
       - name: Android-SDK
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache
