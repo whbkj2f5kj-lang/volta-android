@@ -187,7 +187,7 @@ private:
         std::stable_sort(kids.begin(), kids.end(), [](QQuickItem *a, QQuickItem *b) { return a->z() < b->z(); });
         for (int i = int(kids.size()) - 1; i >= 0; --i) {
             QQuickItem *c = kids.at(i);
-            if (!c->isVisible() || c->opacity() < 0.05 || qobject_cast<KnobFrame *>(c)) continue;
+            if (!c->isVisible() || c->opacity() < 0.05 || dynamic_cast<KnobFrame *>(c)) continue;
             if (!c->contains(c->mapFromScene(scenePt))) { if (c->clip()) continue; }
             if (QQuickItem *hit = topAt(c, scenePt)) return hit;
         }
@@ -209,7 +209,7 @@ private:
     static void collect(QQuickItem *it, const QRectF &screen, QList<QQuickItem *> &out)
     {
         if (!it->isVisible() || !it->isEnabled() || it->opacity() < 0.05) return;
-        if (qobject_cast<KnobFrame *>(it)) return;
+        if (dynamic_cast<KnobFrame *>(it)) return;
         if (clickable(it)) {
             const QRectF r = sceneRect(it);
             if (r.width() >= 20 && r.height() >= 20 && screen.contains(r.center())
