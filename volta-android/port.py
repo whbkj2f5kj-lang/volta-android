@@ -220,7 +220,7 @@ patch("qml/CarPanel.qml", [
      r'\1// OBD verbunden: nur OBD-Tempo (kurze Luecken mit letztem Wert ueberbruecken, nie GPS dazwischen)\n'
      r'\1// Reihenfolge: OBD-Adapter, sonst Radio-CAN, sonst GPS\n'
      r'\1readonly property real portShownKmh: VoltaCar.live ? (VoltaCar.speed >= 0 ? VoltaCar.speed : portObdKmh) : (VoltaCan.hasSpeed ? VoltaCan.speed : portKmh)\n'
-     r'\1gear: VoltaCan.reverse ? "R" : (portShownKmh > 3 ? "D" : "")\n'
+     r'\1gear: VoltaCan.gear !== "" ? VoltaCan.gear : (portShownKmh > 3 ? "D" : "")\n'
      r'\1highBeamOn: VoltaCan.connected && VoltaCan.values.highBeam > 0\n'
      r'\1turnLeft: VoltaCan.connected && (VoltaCan.values.turnLeft > 0 || VoltaCan.values.hazard > 0)\n'
      r'\1turnRight: VoltaCan.connected && (VoltaCan.values.turnRight > 0 || VoltaCan.values.hazard > 0)\n'
@@ -228,7 +228,7 @@ patch("qml/CarPanel.qml", [
      r'\1speedValue: Math.round(portShownKmh).toString()\n'
      r'\1speedUnit:  "km/h"\n'
      r'\1headlightOn: VoltaCan.connected && (VoltaCan.seen.lowBeam === true ? VoltaCan.values.lowBeam > 0 : VoltaCan.values.headlightProp > 0)\n'
-     r'\1seatbeltOn:  VoltaCan.connected && VoltaCan.seen.beltDriver === true && VoltaCan.values.beltDriver > 0\n'
+     r'\1seatbeltOn:  VoltaCan.beltWarning\n'
      r'\1Connections {\n'
      r'\1    target: Gps\n'
      r'\1    function onUpdated(d) { var fresh = d.speedValid !== false && (d.ageMs || 0) < 3000; var k = fresh ? (d.speed || 0) * 3.6 : 0; if (d.accuracyValid && d.accuracy > 25) k = 0; if (speedCluster.portKmh < 1 ? k < 6 : k < 3) k = 0; speedCluster.portKmh = k; if (fresh) portSpeedStale.restart(); else portSpeedStale.stop() }\n'
@@ -964,7 +964,8 @@ CAN_SETTINGS = r'''\1SectionTitle { title: qsTr("Vehicle data from the radio (CA
 \1        model: [
 \1            [qsTr("Speed"), VoltaCan.seen.speed ? VoltaCan.values.speed + " km/h" : "–"],
 \1            [qsTr("Engine speed"), VoltaCan.seen.rpm ? VoltaCan.values.rpm + " rpm" : "–"],
-\1            [qsTr("Gear"), VoltaCan.reverse ? "R" : "–"],
+\1            [qsTr("Gear"), VoltaCan.gear !== "" ? VoltaCan.gear + (VoltaCan.reverse ? "" : qsTr(" (derived)")) : "–"],
+\1            [qsTr("Seat belt"), VoltaCan.seen.beltDriver ? (VoltaCan.values.beltDriver > 0 ? qsTr("fastened") : qsTr("not fastened")) : "–"],
 \1            [qsTr("Odometer"), VoltaCan.seen.odometerRaw ? Math.round(VoltaCan.odometerKm) + " km" : "–"],
 \1            [qsTr("Range"), VoltaCan.seen.range ? VoltaCan.values.range + " km" : "–"],
 \1            [qsTr("Fuel (raw)"), VoltaCan.seen.fuel ? String(VoltaCan.values.fuel) : "–"],
@@ -1004,7 +1005,7 @@ CAN_MAIN = '''    // Radio-CAN: stille Warnkarten (keine Sprache)
             if (moving && door && !portDoorWarned) { portDoorWarned = true
                 notifStack.notify({ id: "can-door", iconType: "info", iconColor: "#ED4E3B", title: qsTr("Door open"), subtitle: qsTr("A door, the trunk or the hood is open while driving"), autoDismissMs: 8000 }) }
             if (!door) { portDoorWarned = false; notifStack.dismiss("can-door") }
-            var belt = VoltaCan.seen.beltDriver === true && v.beltDriver > 0
+            var belt = VoltaCan.beltWarning
             if (moving && belt && !portBeltWarned) { portBeltWarned = true
                 notifStack.notify({ id: "can-belt", iconType: "info", iconColor: "#ED4E3B", title: qsTr("Seat belt"), subtitle: qsTr("Driver seat belt not fastened"), autoDismissMs: 8000 }) }
             if (!belt) portBeltWarned = false

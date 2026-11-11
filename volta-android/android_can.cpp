@@ -29,6 +29,8 @@ class VoltaCanQml : public QObject {
     Q_PROPERTY(QString tempRight READ tempRight NOTIFY changed)
     Q_PROPERTY(double odometerKm READ odometerKm NOTIFY changed)
     Q_PROPERTY(bool lightsOn READ lightsOn NOTIFY changed)
+    Q_PROPERTY(QString gear READ gear NOTIFY changed)
+    Q_PROPERTY(bool beltWarning READ beltWarning NOTIFY changed)
 public:
     explicit VoltaCanQml(QObject *parent) : QObject(parent)
     {
@@ -67,6 +69,12 @@ public:
     // Fahrlicht: Abblendlicht vom CAN, sonst das Lichtsignal des Radios (sys.qf.vehicle.headlight_state)
     bool lightsOn() const { return has("lowBeam") ? v("lowBeam") > 0 : v("headlightProp") > 0; }
 
+    // Die CAN-Box des W204 meldet keinen Wahlhebel. Daraus abgeleitet:
+    // Motor aus -> P; nach dem Start P bis zur ersten Fahrt; danach D (auch an der Ampel); R nur mit Rueckwaertssignal.
+    QString gear() const { return m_gear; }
+    // Gurt-Bit = 1 heisst angelegt (war waehrend der ganzen Fahrt 1). Warnung nur, wenn das Auto den Gurt schon gemeldet hat.
+    bool beltWarning() const { return m_connected && has("beltDriver") && v("beltDriver") <= 0 && (v("speed") > 5); }
+
     Q_INVOKABLE bool has(const QString &k) const { return m_seen.value(k).toBool(); }
     Q_INVOKABLE double value(const QString &k) const { return m_values.value(k).toDouble(); }
     Q_INVOKABLE void setDoorSwap(bool on)
@@ -100,13 +108,27 @@ private:
         m_doorSwap = o.value(QLatin1String("doorSwap")).toBool();
         m_values = o.value(QLatin1String("values")).toObject().toVariantMap();
         m_seen = o.value(QLatin1String("seen")).toObject().toVariantMap();
+        updateGear();
         if (was != m_connected) qInfo() << "[can] radio vehicle service" << (m_connected ? "connected" : "not connected");
         emit changed();
 #endif
     }
 
+    void updateGear()
+    {
+        QString g;
+        if (m_connected && has("rpm")) {
+            const bool engine = v("rpm") > 300, moving = v("speed") > 3;
+            if (reverse()) g = QStringLiteral("R");
+            else if (!engine) { m_moved = false; g = QStringLiteral("P"); }
+            else { if (moving) m_moved = true; g = m_moved ? QStringLiteral("D") : QStringLiteral("P"); }
+        }
+        m_gear = g;
+    }
+
     QTimer m_timer;
-    QString m_last;
+    QString m_last, m_gear;
+    bool m_moved = false;
     bool m_connected = false, m_doorSwap = false;
     QVariantMap m_values, m_seen;
 };

@@ -152,6 +152,19 @@ QByteArray transformStyle(const QByteArray &raw, const QString &s, const QUrlQue
         data.remove(QLatin1String("terrain"));
     }
 
+#ifdef Q_OS_ANDROID
+    // PowerVR-Grafik des Radios stuerzt beim Zeichnen ab (glDrawElements in MapLibre):
+    // 3D-Gebaeude (fill-extrusion) sind die aufwendigste Ebene -> auf Android weglassen
+    {
+        QJsonArray kept;
+        int dropped = 0;
+        for (const QJsonValue &lv : layers) {
+            if (lv.toObject().value(QLatin1String("type")).toString() == QLatin1String("fill-extrusion")) { ++dropped; continue; }
+            kept.append(lv);
+        }
+        if (dropped) { layers = kept; qInfo().noquote() << "[mapproxy] 3D building layers removed:" << dropped; }
+    }
+#endif
     // mapbox://-Quellen und -Schriften laufen ueber diesen Dienst (der den Schluessel anhaengt)
     for (auto it = sources.begin(); it != sources.end(); ++it) {
         QJsonObject src = it.value().toObject();
