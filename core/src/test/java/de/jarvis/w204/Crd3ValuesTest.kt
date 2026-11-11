@@ -44,13 +44,11 @@ class Crd3ValuesTest {
         assertNull(did("coolant").value("NO DATA"))
     }
 
-    @Test fun crossCheckNeedsAgreementWithStandardObd() {
-        val good = Crd3Check.compare(mapOf("rpm" to 760.0, "coolant" to 47.5), mapOf("rpm" to 740.0, "coolant" to 47.0))
-        assertEquals(Crd3Check.Verdict.BESTAETIGT, Crd3Check.verdict(good))
-        val bad = Crd3Check.compare(mapOf("rpm" to 3000.0, "coolant" to 5.0), mapOf("rpm" to 740.0, "coolant" to 47.0))
-        assertEquals(Crd3Check.Verdict.WIDERSPRUCH, Crd3Check.verdict(bad))
-        val one = Crd3Check.compare(mapOf("rpm" to 760.0), mapOf("rpm" to 740.0))
-        assertEquals(Crd3Check.Verdict.TEILWEISE, Crd3Check.verdict(one))
-        assertEquals(Crd3Check.Verdict.NICHT_PRUEFBAR, Crd3Check.verdict(emptyList()))
+    @Test fun referencesApplyOnlyToTheirOwnChannel() {
+        assertEquals(Crd3Check.Verdict.REFERENZ_PASST, Crd3Check.bracket("rpm", 760.0, 740.0, 750.0, 100))
+        assertEquals(Crd3Check.Verdict.ABWEICHUNG, Crd3Check.bracket("rpm", 3000.0, 740.0, 750.0, 100))
+        assertEquals(Crd3Check.Verdict.REFERENZ_INSTABIL, Crd3Check.bracket("rpm", 760.0, 740.0, 1500.0, 100))
+        assertEquals(Crd3Check.Verdict.NICHT_PRUEFBAR, Crd3Check.bracket("rpm", 760.0, 740.0, 750.0, 5001))
+        assertEquals(Crd3Check.Verdict.NICHT_PRUEFBAR, Crd3Check.bracket("dpfSootG", 3.31, 3.31, 3.31, 100))
     }
 }

@@ -63,10 +63,22 @@ object ReadOnly {
 /** Zugriff auf den Adapter, der nur Leseanfragen und die Zieladresse (7E0–7E7) erlaubt. */
 class SafeElm internal constructor(private val exchange: (String, Long) -> String) {
     internal constructor(e: Elm327) : this(e::send)
-    private fun send(cmd: String, timeoutMs: Long = 1500) = exchange(cmd, timeoutMs)
+    /** Scoped diagnostic report sink; raw data is not sent to logcat or a server. */
+    internal var trace: ((String) -> Unit)? = null
+    private fun send(cmd: String, timeoutMs: Long = 1500): String {
+        val route = "TX=${header ?: "?"} RX=${responseId?.let { "%03X".format(it) } ?: "?"}"
+        return try {
+            exchange(cmd, timeoutMs).also { trace?.invoke("$route > $cmd => " + it.take(4096).replace("\r", " | ").replace("\n", " | ")) }
+        } catch (e: Exception) {
+            trace?.invoke("$route > $cmd => FEHLER ${e.message}")
+            throw e
+        }
+    }
     private var header: String? = null
     private var responseId: Int? = null
     private var verifySource = false
+    private var routeFailed = false
+    private var configurationTouched = false
 
 
     /**
@@ -96,6 +108,8 @@ class SafeElm internal constructor(private val exchange: (String, Long) -> Strin
         if (header != tx || responseId != rx || !verifySource) {
             // Fail closed during any reconfiguration, including a half-completed one.
             verifySource = false
+            routeFailed = true
+            configurationTouched = true
             check(send("ATH1").trim().equals("OK", true)) { "Adapter liefert keine prüfbaren Antwortadressen" }
             headersOn = true
             check(send("ATSH$tx").trim().equals("OK", true)) { "Adapter lehnt Zieladresse $tx ab" }
@@ -111,10 +125,12 @@ class SafeElm internal constructor(private val exchange: (String, Long) -> Strin
             responseId = rx
         }
         verifySource = true
+        routeFailed = false
     }
 
     fun request(cmd: String, timeoutMs: Long = 1500): String {
         if (!ReadOnly.isAllowed(cmd)) throw ReadOnlyViolation(cmd)
+        check(!routeFailed) { "Diagnoseroute wurde nicht erfolgreich eingerichtet" }
         return checked(send(cmd, timeoutMs))
     }
 
@@ -157,6 +173,7 @@ class SafeElm internal constructor(private val exchange: (String, Long) -> Strin
         if (c == "ATST32") shortTimeout = false
         if (c == "ATH0") headersOn = false
         verifySource = false
+        routeFailed = false
         return send(c, timeoutMs)
     }
 
@@ -166,13 +183,15 @@ class SafeElm internal constructor(private val exchange: (String, Long) -> Strin
     internal fun restore() {
         if (headersOn) { runCatching { send("ATH0") }; headersOn = false }
         if (shortTimeout) { runCatching { send("ATST32") }; shortTimeout = false }
-        if (header != null && header != "7DF") {
+        if (configurationTouched || (header != null && header != "7DF")) {
             runCatching { send("ATCRA") }
             runCatching { send("ATSH7DF") }
         }
         header = null
         responseId = null
         verifySource = false
+        routeFailed = false
+        configurationTouched = false
     }
 }
 

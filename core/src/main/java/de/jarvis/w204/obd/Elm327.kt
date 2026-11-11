@@ -27,7 +27,7 @@ class Elm327 private constructor(private val socket: BluetoothSocket) : Closeabl
         while (input.available() > 0) { if (input.read(buf, 0, minOf(input.available(), buf.size)) <= 0) break }
         output.write("$cmd\r".toByteArray(Charsets.US_ASCII))
         output.flush()
-        val sb = StringBuilder()
+        val reply = ElmReplyBuffer(cmd)
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         while (SystemClock.elapsedRealtime() < deadline) {
             val n = input.available()
@@ -37,13 +37,13 @@ class Elm327 private constructor(private val socket: BluetoothSocket) : Closeabl
                 if (r < 0) throw IOException("Verbindung getrennt")
                 for (i in 0 until r) {
                     val c = buf[i].toInt() and 0xFF
-                    if (c == '>'.code) return sb.toString().trim()
-                    sb.append(c.toChar())
+                    reply.accept(c.toChar())?.let { return it }
                 }
             } else {
                 Thread.sleep(2)
             }
         }
+        reply.pendingAtDeadline()?.let { return it }
         throw ElmTimeoutException(cmd)
     }
 

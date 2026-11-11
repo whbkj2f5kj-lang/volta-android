@@ -94,31 +94,24 @@ object Crd3Values {
     fun forId(id: Int): List<Did> = all.filter { it.id == id }
 }
 
-/**
- * Abgleich am Fahrzeug: Stimmen die CRD3-Kennungen mit genormten OBD-Werten desselben
- * Motors ueberein, gilt die Zuordnung fuer dieses Steuergeraet als bestaetigt.
- */
+/** A matching reference supports only that single channel, never the whole ECU catalogue. */
 object Crd3Check {
-    data class Match(val key: String, val label: String, val crd3: Double, val obd: Double, val ok: Boolean)
-    enum class Verdict { BESTAETIGT, TEILWEISE, WIDERSPRUCH, NICHT_PRUEFBAR }
-
-    private val tolerance = mapOf("rpm" to 150.0, "coolant" to 4.0, "intakeTemp" to 6.0, "voltage" to 0.8, "baro" to 30.0, "rail" to 60.0)
-
-    fun compare(crd3: Map<String, Double>, obd: Map<String, Double>): List<Match> =
-        tolerance.mapNotNull { (key, tol) ->
-            val a = crd3[key] ?: return@mapNotNull null
-            val b = obd[key] ?: return@mapNotNull null
-            val label = Crd3Values.all.first { it.key == key }.label
-            Match(key, label, a, b, kotlin.math.abs(a - b) <= tol)
-        }
-
-    fun verdict(pairs: List<Match>): Verdict {
-        val ok = pairs.count { it.ok }
-        return when {
-            pairs.isEmpty() -> Verdict.NICHT_PRUEFBAR
-            ok == pairs.size && ok >= 2 -> Verdict.BESTAETIGT
-            ok == 0 -> Verdict.WIDERSPRUCH
-            else -> Verdict.TEILWEISE
-        }
+    data class Reference(val pid: Int, val bytes: Int, val tolerance: Double, val decode: (IntArray) -> Double)
+    val references = mapOf(
+        "rpm" to Reference(0x0C, 2, 150.0) { (it[0] * 256 + it[1]) / 4.0 },
+        "coolant" to Reference(0x05, 1, 4.0) { it[0] - 40.0 },
+        "intakeTemp" to Reference(0x0F, 1, 6.0) { it[0] - 40.0 },
+        "voltage" to Reference(0x42, 2, 0.8) { (it[0] * 256 + it[1]) / 1000.0 },
+        "baro" to Reference(0x33, 1, 30.0) { it[0] * 10.0 },
+        "rail" to Reference(0x23, 2, 60.0) { (it[0] * 256 + it[1]) / 10.0 },
+    )
+    enum class Verdict { REFERENZ_PASST, ABWEICHUNG, REFERENZ_INSTABIL, NICHT_PRUEFBAR }
+    fun bracket(key: String, value: Double, before: Double?, after: Double?, spanMs: Long): Verdict {
+        val r = references[key] ?: return Verdict.NICHT_PRUEFBAR
+        if (before == null || after == null || !value.isFinite() || !before.isFinite() || !after.isFinite() || spanMs !in 0..5000)
+            return Verdict.NICHT_PRUEFBAR
+        if (kotlin.math.abs(after - before) > r.tolerance) return Verdict.REFERENZ_INSTABIL
+        return if (kotlin.math.abs(value - before) <= r.tolerance && kotlin.math.abs(value - after) <= r.tolerance)
+            Verdict.REFERENZ_PASST else Verdict.ABWEICHUNG
     }
 }

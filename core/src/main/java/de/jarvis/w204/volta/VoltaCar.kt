@@ -11,10 +11,9 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import de.jarvis.w204.obd.MercedesDiagnostics
-import de.jarvis.w204.obd.Crd3Check
+import de.jarvis.w204.obd.Crd3Probe
 import de.jarvis.w204.obd.Crd3Values
-import de.jarvis.w204.obd.DiagParser
-import de.jarvis.w204.obd.ReadOnly
+import de.jarvis.w204.obd.DiagnosticAnswer
 import android.os.SystemClock
 import de.jarvis.w204.map.SpeedSample
 import de.jarvis.w204.car.ConnState
@@ -116,35 +115,48 @@ object VoltaCar {
                 val manager = obd ?: error("OBD noch nicht gestartet")
                 check(manager.status.value.state == ConnState.CONNECTED) { "OBD nicht verbunden oder Demo-Modus aktiv" }
                 val connected = manager.withAdapter { elm ->
-                    fun checkCandidate(label: String, tx: String, rx: String, command: String, positive: String) {
-                        lines += ""
-                        lines += "$label | TX=$tx RX=$rx | Anfrage=$command"
-                        // target() rejects headerless and wrong-source ELM/CAN frames.
-                        try {
-                            elm.target(tx)
-                            val pdu = elm.request(command, 2500).trim()
-                            lines += "Quellengepruefte Antwort-PDU: $pdu"
-                            if (pdu == "NO DATA") {
-                                lines += "Ergebnis: keine nachgewiesene Antwort vom erwarteten Steuergeraet"
-                            } else if (pdu.startsWith(positive)) {
-                                lines += "Ergebnis: positive Antwort, Kennung vorhanden (Bedeutung fahrzeugspezifisch unbestaetigt)"
-                                if (command == MercedesDiagnostics.BATTERY_DID_REQUEST) {
-                                    val volts = MercedesDiagnostics.decodeCrd3BatteryVolts(pdu)
-                                    lines += if (volts != null) "CRD3 Kandidat Batteriespannung: $volts V (nicht W204-verifiziert)"
-                                             else "CRD3 Batteriespannung: Antwortformat nicht validiert"
+                    val trace = mutableListOf<String>()
+                    val traceStart = SystemClock.elapsedRealtime()
+                    elm.trace = { trace += "${SystemClock.elapsedRealtime() - traceStart}ms $it" }
+                    try {
+                        fun checkCandidate(label: String, tx: String, rx: String, command: String) {
+                            lines += ""
+                            lines += "$label | TX=$tx RX=$rx | Anfrage=$command"
+                            // target() rejects headerless and wrong-source ELM/CAN frames.
+                            try {
+                                elm.target(tx)
+                                val pdu = elm.request(command, 2500).trim()
+                                lines += "Quellengepruefte Antwort-PDU: $pdu"
+                                val answer = DiagnosticAnswer.select(pdu, command)
+                                if (answer.kind == DiagnosticAnswer.Kind.PENDING) {
+                                    lines += "Ergebnis: WARTEN (NRC 78), kein Endergebnis innerhalb Zeitlimit"
+                                } else if (pdu == "NO DATA") {
+                                    lines += "Ergebnis: keine nachgewiesene Antwort vom erwarteten Steuergeraet"
+                                } else if (answer.kind == DiagnosticAnswer.Kind.POSITIVE) {
+                                    lines += "Ergebnis: positive Antwort, Kennung vorhanden (Bedeutung fahrzeugspezifisch unbestaetigt)"
+                                    if (command == MercedesDiagnostics.BATTERY_DID_REQUEST) {
+                                        val volts = MercedesDiagnostics.decodeCrd3BatteryVolts(answer.pdu)
+                                        lines += if (volts != null) "CRD3 Kandidat Batteriespannung: $volts V (nicht W204-verifiziert)"
+                                                 else "CRD3 Batteriespannung: Antwortformat nicht validiert"
+                                    }
+                                } else if (answer.kind == DiagnosticAnswer.Kind.NEGATIVE) {
+                                    lines += "Ergebnis: negative Diagnoseantwort (kein Live-Wert)"
+                                } else {
+                                    lines += "Ergebnis: unerwartete Antwort (kein Live-Wert)"
                                 }
-                            } else if (pdu.startsWith("7F" + command.take(2))) {
-                                lines += "Ergebnis: negative Diagnoseantwort (kein Live-Wert)"
-                            } else {
-                                lines += "Ergebnis: unerwartete Antwort (kein Live-Wert)"
+                            } catch (t: Exception) {
+                                lines += "Diagnose fehlgeschlagen: " + (t.message ?: t.javaClass.simpleName)
                             }
-                        } catch (t: Exception) {
-                            lines += "Diagnose fehlgeschlagen: " + (t.message ?: t.javaClass.simpleName)
                         }
+                        checkCandidate("5G-Tronic/722.6, Getriebeoeltemperatur-Kandidat",
+                            "7E1", "7E9", MercedesDiagnostics.TRANSMISSION_TEMP_CANDIDATE)
+                        crd3Section(elm, manager, lines)
+                    } finally {
+                        elm.trace = null
+                        lines += ""
+                        lines += "== Adapter-Rohprotokoll: Zeit relativ zum Teststart; Adressen in Antwortframes beachten =="
+                        lines += trace
                     }
-                    checkCandidate("5G-Tronic/722.6, Getriebeoeltemperatur-Kandidat",
-                        "7E1", "7E9", MercedesDiagnostics.TRANSMISSION_TEMP_CANDIDATE, "6130")
-                    crd3Section(elm, manager, lines)
                 }
                 if (connected == null) lines += "Keine aktive Bluetooth-OBD-Verbindung"
                 lines += ""
@@ -165,76 +177,12 @@ object VoltaCar {
      * Rohantwort und berechneten Wert festhalten und gegen genormte OBD-Werte abgleichen.
      */
     private fun crd3Section(elm: de.jarvis.w204.obd.SafeElm, manager: ObdManager, lines: MutableList<String>) {
-        val v = manager.vehicle.value
-        val obd = buildMap<String, Double> {
-            v.rpm?.let { put("rpm", it.toDouble()) }
-            v.coolant?.let { put("coolant", it.toDouble()) }
-            v.intakeTemp?.let { put("intakeTemp", it.toDouble()) }
-            v.voltage?.let { put("voltage", it) }
-            v.baroKpa?.let { put("baro", it * 10.0) }
-            v.railBar?.let { put("rail", it.toDouble()) }
-        }
         lines += ""
-        lines += "== OM651 / Delphi CRD3: Motor-Istwerte (7E0 -> 7E8, Dienst 22, nur lesen) =="
-        lines += "Kennungen und Formeln: github.com/mcgyver78/WiCAN_W906 (Sprinter OM651 CRD3, gegen Xentry ermittelt)."
-        val values = LinkedHashMap<String, Double>()
-        var positive = 0; var negative = 0; var silent = 0
         try {
             elm.target("7E0")
-        } catch (t: Exception) {
-            lines += "Adapter-Einrichtung fehlgeschlagen: " + (t.message ?: t.javaClass.simpleName)
-            return
-        }
-        var group: Crd3Values.Group? = null
-        for (id in Crd3Values.requests) {
-            val defs = Crd3Values.forId(id)
-            if (defs.first().group != group) { group = defs.first().group; lines += ""; lines += "[" + group + "]" }
-            val request = defs.first().request
-            val pdu = try { elm.request(request, 1500).trim().lineSequence().firstOrNull()?.trim() ?: "NO DATA" }
-                      catch (t: Exception) { "FEHLER " + (t.message ?: t.javaClass.simpleName) }
-            when {
-                pdu.startsWith("62") -> {
-                    positive++
-                    for (d in defs) {
-                        val x = d.value(pdu)
-                        lines += when {
-                            x == null -> "%s  %s: Antwortlaenge passt nicht zur Formel | roh %s".format(request, d.label, pdu)
-                            !d.plausible(x) -> "%s  %s: %.2f %s UNPLAUSIBEL | roh %s".format(Locale.GERMANY, request, d.label, x, d.unit, pdu)
-                            else -> { values[d.key] = x; "%s  %s: %.2f %s | roh %s".format(Locale.GERMANY, request, d.label, x, d.unit, pdu) }
-                        }
-                    }
-                }
-                pdu.startsWith("7F") -> { negative++; lines += "$request  ${defs.first().label}: vom Steuergeraet abgelehnt ($pdu)" }
-                else -> { silent++; lines += "$request  ${defs.first().label}: keine Antwort ($pdu)" }
-            }
-        }
-        lines += ""
-        lines += "[ROH, ohne Formel]"
-        for (id in Crd3Values.rawOnly) {
-            val request = "22%04X".format(id)
-            val pdu = try { elm.request(request, 1500).trim().lineSequence().firstOrNull()?.trim() ?: "NO DATA" }
-                      catch (t: Exception) { "FEHLER " + (t.message ?: t.javaClass.simpleName) }
-            lines += "$request  roh $pdu"
-        }
-        lines += ""
-        lines += "Antworten: $positive positiv, $negative abgelehnt, $silent ohne Antwort (von ${Crd3Values.requests.size})."
-        val pairs = Crd3Check.compare(values, obd)
-        for (p in pairs) lines += "Abgleich %s: CRD3 %.1f / OBD %.1f -> %s".format(Locale.GERMANY, p.label, p.crd3, p.obd, if (p.ok) "passt" else "WEICHT AB")
-        lines += when (Crd3Check.verdict(pairs)) {
-            Crd3Check.Verdict.BESTAETIGT -> "ERGEBNIS: Zuordnung fuer dieses Steuergeraet bestaetigt (alle Vergleichswerte passen)."
-            Crd3Check.Verdict.TEILWEISE -> "ERGEBNIS: Zuordnung nur teilweise bestaetigt; Werte mit Vorsicht lesen."
-            Crd3Check.Verdict.WIDERSPRUCH -> "ERGEBNIS: Vergleichswerte passen NICHT; dieses Steuergeraet nutzt andere Kennungen."
-            Crd3Check.Verdict.NICHT_PRUEFBAR -> "ERGEBNIS: kein Abgleich moeglich (keine gemeinsamen Werte gelesen)."
-        }
-        val soot = values["dpfSootPct"]; val ash = values["dpfAshG"]; val km = values["dpfKm"]
-        if (soot != null || ash != null || km != null) {
-            lines += "DPF kurz: " + listOfNotNull(
-                soot?.let { "Russ %.0f %%".format(Locale.GERMANY, it) },
-                values["dpfSootG"]?.let { "%.1f g".format(Locale.GERMANY, it) },
-                ash?.let { "Asche %.1f g".format(Locale.GERMANY, it) },
-                km?.let { "%.0f km seit Regeneration".format(Locale.GERMANY, it) },
-                values["dpfRegen"]?.let { if (it == 1.0) "Regeneration nicht aktiv" else "Regenerationsstatus %.0f".format(Locale.GERMANY, it) },
-            ).joinToString(", ")
+            lines += Crd3Probe.run(manager.status.value.supportedPids, elm::request, SystemClock::elapsedRealtime)
+        } catch (e: Exception) {
+            lines += "CRD3-Test fehlgeschlagen: ${e.message}"
         }
     }
 

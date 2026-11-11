@@ -117,5 +117,23 @@ Kennungsfamilie.
 
 Volta fuehrt diese Liste in `Crd3Values.kt` und liest sie im Mercedes-Test genau einmal, nur lesend.
 Der Test gleicht Drehzahl, Kuehlmittel, Ansaugluft, Spannung, Luftdruck und Raildruck mit den genormten
-OBD-Werten desselben Motors ab. Erst wenn dieser Abgleich am W204 passt, gelten die Kennungen fuer
-dieses Steuergeraet als bestaetigt und duerfen in die Live-Anzeige.
+OBD-Werten desselben Motors ab. Ein passender Abgleich stuetzt ausschliesslich den verglichenen Kanal. Andere Kennungen, insbesondere DPF-Werte, bleiben unbestaetigt und werden nicht automatisch fuer die Live-Anzeige freigegeben.
+
+## Belastbarer ELM-Bericht (11.11.2026)
+
+Die WiCAN-Kandidaten bleiben erhalten. Referenzstand der externen Quelle:
+[`8660053b0b154a511f8964b0fe6d0767322ba6d9`](https://github.com/mcgyver78/WiCAN_W906/blob/8660053b0b154a511f8964b0fe6d0767322ba6d9/W906.md).
+Die MBito-APK wurde hier nicht dekompiliert. Im Repository liegt kein nachvollziehbarer MBito-Nachweis fuer eine neue Kennung samt Route und Skalierung vor. Die Rohkandidaten werden deshalb nicht als MBito-verifizierte Messwerte ausgegeben. MBitos eigene Adapteranbindung ist kein Beweis fuer Kompatibilitaet mit einem beliebigen ELM327.
+
+Der manuelle Mercedes-Test prueft jetzt die vorhandenen Kennungen wie folgt:
+
+- Der passende unterstuetzte Mode-01-Motorwert wird direkt vor und nach dem jeweiligen Herstellerwert gelesen. Es werden keine alten Dashboard-Werte verwendet. Spannung wird mit Motor-PID `0142` verglichen, nicht mit der eigenen `ATRV`-Messung des Adapters.
+- Jede Referenz gilt nur fuer ihren Messkanal. Bei fehlender Referenz, einem Zeitfenster ueber 5 Sekunden oder instabilen Vorher-/Nachher-Werten ist kein belastbarer Vergleich moeglich. Ein einzelner passender Vergleich ist noch keine fahrzeugspezifische Validierung der Formel.
+- Positive Antwort, Ablehnung mit NRC, Warten (`7F xx 78`), unerwartete Antwort und fehlende Daten bleiben getrennt. Alle vollstaendigen PDUs werden durchsucht, statt nur die erste Zeile zu verwenden. Ein passendes SID/DID-Echo ist erforderlich.
+- Beim NRC 78 bleibt der Transport innerhalb der urspruenglichen Anfragefrist empfangsbereit, auch wenn der Adapter dazwischen einen Prompt liefert. Es gibt keine automatische Wiederholung der Anfrage und keine verlaengerte Endlosschleife. Fehlt die Endantwort, wird WARTEN statt Ablehnung gemeldet.
+- Der gespeicherte Bericht enthaelt zusaetzlich Adapterbefehle, rohe Antwortframes einschliesslich tatsaechlicher CAN-Absender und Zeiten relativ zum Teststart. Rohantworten werden auf 4096 Zeichen je Austausch begrenzt und nicht in Logcat oder an einen Server geschrieben. Verbindungsabbrueche und verworfene Antworten bleiben damit unterscheidbar. Der Routenkontext am Zeilenanfang bezeichnet die zuletzt erfolgreich eingerichtete Route; bei AT-Konfigurationsbefehlen zeigt der Befehl selbst die neu angeforderte Einstellung.
+- Nach einem gescheiterten Routenaufbau werden Messwertabfragen blockiert und beim Verlassen des exklusiven Zugriffs die Standard-OBD-Konfiguration wiederhergestellt.
+
+DPF-Russmasse/-Prozent aus derselben Kennung sind keine zwei unabhaengigen Bestaetigungen. Ein erfolgreicher Drehzahl-/Spannungsabgleich bestaetigt weder DPF-Asche noch Regenerationsstatus. Alle herstellerspezifischen Werte bleiben als Kandidaten gekennzeichnet. Es wird kein Live-Polling, keine FIN-Abfrage und keine neue Sitzungsumschaltung hinzugefuegt.
+
+Der naechste Fahrzeugbericht soll fuer jeden interessanten Wert liefern: genaue Anfrage, TX/RX, rohe Antwort, Kennung/Laenge, berechneter Kandidat und gegebenenfalls zeitnaher unabhaengiger Referenzvergleich. Erst eine separate, messwertbezogene Verifikation erlaubt eine spaetere Freigabe. Ein `NO DATA` allein beweist keinen Adapterdefekt.
