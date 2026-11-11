@@ -325,7 +325,7 @@ jobs:
           printf '\ndependencies {\n    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.0.20"\n    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"\n    implementation "com.github.mik3y:usb-serial-for-android:3.8.1"\n    implementation "com.herohan:UVCAndroid:1.0.13"\n    implementation "com.google.mlkit:text-recognition:16.0.1"\n    implementation "com.google.mediapipe:tasks-vision:0.10.14"\n}\nrepositories { maven { url "https://jitpack.io"; content { includeGroup "com.github.mik3y" } } }\n' >> volta-android/android/build.gradle
           printf '\nandroid { androidResources { noCompress.addAll(["tflite", "bin"]) } }\n' >> volta-android/android/build.gradle
           mkdir -p volta-android/android/assets
-          cp -r corelibs/assets/. volta-android/android/assets/
+          cp -r volta-android/android/libs/assets/. volta-android/android/assets/
           A=volta-android/android/assets/volta
           mkdir -p $A/assets
           cp -r upstream/services $A/
@@ -347,8 +347,8 @@ jobs:
           unzip -Z1 "$U" > apk-files.txt
           grep -Eq '^lib/[^/]+/libplugins_assetimporters_assimp_[^/]+\.so$' apk-files.txt || { echo "GLB-Importer fehlt in der APK (Assimp)"; exit 1; }
           grep -q "libQt6WebViewQuick_" apk-files.txt || { echo "Android WebView fehlt in der APK"; exit 1; }
-          unzip -Z1 "$U" | grep -q '^assets/signnet.bin$' || { echo "Schildmodell fehlt"; exit 1; }
-          unzip -Z1 "$U" | grep -q '^assets/efficientdet_lite0.tflite$' || { echo "Fahrzeugfilter fehlt"; exit 1; }
+          grep -q '^assets/signnet.bin$' apk-files.txt || { echo "Schildmodell fehlt"; exit 1; }
+          grep -q '^assets/efficientdet_lite0.tflite$' apk-files.txt || { echo "Fahrzeugfilter fehlt"; exit 1; }
           unzip -l "$U" | grep -i "maplibre" || { echo "MapLibre fehlt in der APK"; exit 1; }
           unzip -p "$U" 'classes*.dex' | grep -aq "de/jarvis/w204/volta/VoltaCar" || { echo "Fahrzeug-Technik fehlt in der APK"; exit 1; }
           $ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner sign --ks volta.jks --ks-pass pass:voltaport --key-pass pass:voltaport \
