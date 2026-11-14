@@ -140,7 +140,7 @@ private slots:
         QTemporaryDir isolated; const QString dir=isolated.path();
         QVERIFY(QFile::copy(sourceDir+"/AppDrawer.qml",dir+"/AppDrawer.qml"));
         engine=std::make_unique<QQmlApplicationEngine>();
-        const QByteArray qml=QString("import QtQuick;import QtQuick.Window;import '.';Window {id:root;width:800;height:600;visible:true;property real uPx:1;property string selected:'';property bool editMode:false;AppDrawer {anchors.centerIn:parent;width:600;editModeActive:root.editMode;qtApps:[{id:'settings',name:'Settings',icon:''},{id:'android:test',name:'Music',icon:''}];onPortKnobCloseRequested:{root.editMode=false;root.selected='closed'};onAppSelected: appId => root.selected=appId}}").toUtf8();
+        const QByteArray qml=QString("import QtQuick;import QtQuick.Window;import '.';Window {id:root;width:800;height:600;visible:true;property real uPx:1;property string selected:'';property bool editMode:false;AppDrawer {anchors.centerIn:parent;width:600;editModeActive:root.editMode;qtApps:[{id:'settings',name:'Settings',icon:''},{id:'android:test',name:'Music',icon:''}];onPortKnobCloseRequested:{root.editMode=false;root.selected='closed'}\nonAppSelected: appId => root.selected=appId}}").toUtf8();
         engine->loadData(qml,QUrl::fromLocalFile(dir+"/KnobDrawerTest.qml")); QVERIFY(!engine->rootObjects().isEmpty());
         window=qobject_cast<QQuickWindow *>(engine->rootObjects().first());QVERIFY(window);
         QTRY_VERIFY(window->isExposed() && window->contentItem()->width()==window->width());
