@@ -1,47 +1,75 @@
-# Volta OS für Android
+<p align="center">
+  <img src="docs/assets/volta-banner.svg" alt="Volta OS für Android – Dashboard, Navigation und Fahrzeugdaten" width="100%">
+</p>
 
-Android-Port von [VoltaOS](https://github.com/Omardigio/VoltaOS) für ein Android-Autoradio.
-Der Volta-Code selbst wird beim Bau unverändert vom Original geholt (fester Stand); hier liegt nur,
-was für Android nötig ist.
+<p align="center">
+  Die Volta-Oberfläche auf deinem Android-Autoradio – mit Android-Apps und W204-Anbindung.
+</p>
 
-## App herunterladen
+<p align="center">
+  <a href="https://github.com/whbkj2f5kj-lang/volta-android/releases/latest/download/volta-arm64.apk"><img alt="Android ARM64 – APK herunterladen" src="https://img.shields.io/badge/Android_ARM64-APK_herunterladen-3D6FE7?style=for-the-badge&amp;logo=android&amp;logoColor=white"></a>
+  <a href="https://github.com/whbkj2f5kj-lang/volta-android/releases/latest"><img alt="Aktuellen Release ansehen" src="https://img.shields.io/badge/Release-Details-30363D?style=for-the-badge&amp;logo=github&amp;logoColor=white"></a>
+</p>
 
-Unter **Releases → „Volta OS (Android-Port)“**:
+<p align="center">
+  <a href="https://github.com/whbkj2f5kj-lang/volta-android/actions/workflows/volta.yml"><img alt="Android-Build" src="https://github.com/whbkj2f5kj-lang/volta-android/actions/workflows/volta.yml/badge.svg?branch=main"></a>
+  <a href="LICENSE"><img alt="Lizenz GPL v3" src="https://img.shields.io/badge/Lizenz-GPL_v3-blue"></a>
+</p>
 
-- `volta-arm32.apk` – für das Radio (32-Bit-Android)
-- `volta-arm64.apk` – für 64-Bit-Geräte
+## Aufs Radio bringen
 
-Jede Änderung in diesem Repo baut die APKs automatisch neu (Reiter **Actions**).
+1. **[Aktuelle ARM64-APK herunterladen](https://github.com/whbkj2f5kj-lang/volta-android/releases/latest/download/volta-arm64.apk).** Aktuell wird ausschließlich die 64-Bit-Version gebaut.
+2. Auf dem Radio installieren. Bei Updates die vorhandene App **nicht vorher deinstallieren**, damit Einstellungen und Keys erhalten bleiben. Der Signierschlüssel muss übereinstimmen.
+3. Androids Installationsbestätigung abschließen und Volta öffnen.
 
-## Was hier liegt
+Spätere Updates findest du direkt in **Settings → System → Software update**: **Check for updates** prüft und lädt eine neue Version, **Install update** öffnet danach die Android-Installation. Volta prüft auch automatisch im Hintergrund.
 
-| Ordner / Datei | Zweck |
-|---|---|
-| `volta-android/port.py` | passt Voltas Build für Android an |
-| `volta-android/volta_port.cpp` | Start auf Android, Fehlerprotokoll, Dateiauswahl |
-| `volta-android/volta_mapproxy.cpp` | Kartendienst (ersetzt Voltas Python-Dienst) |
-| `volta-android/android_gps.cpp` | Standort über Android |
-| `volta-android/shim*`, `qmlstubs/` | Platzhalter für Linux-Teile, die es auf Android nicht gibt |
-| `volta-android/android/` | Android-Manifest (App + wählbarer Startbildschirm) |
-| `.github/workflows/volta.yml` | automatischer Bau |
+**[Versionshinweise und Downloads →](https://github.com/whbkj2f5kj-lang/volta-android/releases/latest)**
 
-## Fahrzeug-Technik (Stufe 2)
+## Was Volta mitbringt
 
-- Tempolimits aus OpenStreetMap, gespeist ausschliesslich von Voltas Android-GPS; Mapbox-Limits bleiben waehrend der Navigation als Rueckfall verfuegbar.
-- Vorhandenes Tempolimit-Schild und vorhandene Hinweiskarten, ohne Sprachausgabe.
-- Unter Einstellungen → Vehicle: OSM ein/aus, visuelle Warnungen und Warnschwelle.
-- Nur frische Geschwindigkeitswerte (OBD bevorzugt, sonst GPS). Unklare Strassen, geschaetzte Limits und nicht auswertbare Bedingungen loesen keine OSM-Warnung aus.
-- OSM-Kacheln werden begrenzt offline gespeichert. Ohne passende Daten bleibt das Limit unbekannt.
-- GPS, Adapter und Warnverhalten muessen am Fahrzeug getestet werden; die CI prueft Logik und Builds.
+| Bereich | Android-Anbindung |
+| :--- | :--- |
+| **Oberfläche** | Voltas Dashboard mit 3D-Fahrzeug, App-Ansicht und vorhandenen Benachrichtigungskarten |
+| **Apps** | Installierte Android-Apps starten und Volta-Symbolen zuordnen; Web-Ansichten über Android System WebView |
+| **Navigation** | Android-GPS, Karten, Ortssuche und Tempolimits; einzelne Dienste benötigen eigene API-Keys |
+| **OBD** | Standard-Motordaten über Bluetooth-ELM327 und lesende Mercedes-Diagnose; herstellerspezifische Messwerte sind noch fahrzeugspezifisch zu bestätigen |
+| **Radio / CAN** | Fahrzeugdaten des unterstützten Radio-Dienstes, etwa Türen und Blinker; verfügbare Daten hängen von Firmware und CAN-Box ab |
+| **Kamera** | Kameravorschau, optionale USB-Dashcam und Schildererkennung |
+| **Reifendruck** | Optionale USB-TPMS-Anbindung mit Sollwerten und visuellen Hinweisen |
 
-## Schwarzes W204-Modell
+Der Port wird weiterentwickelt. Hardwarefunktionen werden zusätzlich am jeweiligen Radio geprüft; ein erfolgreicher Build ersetzt diesen Test nicht.
 
-[Modell als ZIP herunterladen](models/w204-black.zip) · [Import und Quellenangabe](models/README.md)
+## Keys ohne Abtippen
 
-## Fehlerprotokoll
+Unter **Settings → Vehicle → Keys (keys.env)** kannst du eine vorbereitete Datei aus Downloads oder von einem USB-Stick auswählen.
 
-Auf dem Gerät unter `Android/data/de.jarvis.volta/files/volta_log.txt` (vorheriger Start: `volta_log_alt.txt`).
+Unterstützte Anbieter-Einträge sind `MAPBOX_TOKEN`, `MAPTILER_KEY`, `TOMTOM_KEY` und `OWM_KEY`. Der optionale GitHub-Key für den Log-Upload lässt sich ebenfalls darüber übernehmen. Echte Keys gehören in deine lokale Datei, nicht ins öffentliche Repository.
 
-## Lizenz
+**[Details zur Android-Anbindung →](volta-android/README.md)**
 
-GPL-3.0 wie VoltaOS (siehe `LICENSE`). Kartenbibliothek: MapLibre Native Qt (BSD-2-Clause).
+## Dein W204 in Schwarz
+
+Das vorbereitete 3D-Modell liegt als separater Download im Repository. Import und Quellenangabe stehen beim Modell.
+
+**[W204-Modell herunterladen](models/w204-black.zip)** · **[Import und Urheberhinweis](models/README.md)**
+
+## Diagnose und Entwicklung
+
+- **[Builds und Prüfungen](https://github.com/whbkj2f5kj-lang/volta-android/actions/workflows/volta.yml)** – Fortschritt und Ergebnisse der GitHub-Builds.
+- **[Android-Port](volta-android/README.md)** – Einrichtung, technische Anbindung und Tests.
+- **[Mercedes-Diagnose OM651 / 5G-Tronic](docs/obd-om651-5g.md)** – Quellen, Kandidaten und Grenzen der Messwerte.
+- **Logs auf dem Radio:** `Android/data/de.jarvis.volta/files/`, insbesondere `volta_log.txt`, `volta_obd_log.txt`, `volta_keys.txt` und `volta_can_log.txt`.
+
+| Pfad | Inhalt |
+| :--- | :--- |
+| `volta-android/` | Android-Port, Qt-Anbindung und QML-Anpassungen |
+| `core/` | Fahrzeug-, OBD-, Kamera- und weitere technische Komponenten |
+| `models/` | W204-Modell und Quellenangaben |
+| `.github/workflows/volta.yml` | APK-Build, Tests und Release-Veröffentlichung |
+
+## Basis und Lizenz
+
+Dieser Android-Port basiert auf **[VoltaOS von Omardigio](https://github.com/Omardigio/VoltaOS)**. Der Build verwendet einen festgelegten Upstream-Stand und ergänzt die Android-Anbindung; die Volta-Oberfläche bleibt die gestalterische Basis.
+
+**[GPL-3.0](LICENSE)** · Kartenbibliothek: **[MapLibre Native Qt](https://github.com/maplibre/maplibre-native-qt)** unter BSD-2-Clause. Die Quellenangabe für das Fahrzeugmodell steht in [models/README.md](models/README.md).

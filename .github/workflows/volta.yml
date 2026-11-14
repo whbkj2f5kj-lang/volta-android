@@ -98,7 +98,7 @@ jobs:
       - name: Protokoll bei Fehler
         if: failure()
         run: |
-          gh release view volta -R ${{ github.repository }} >/dev/null 2>&1 || gh release create volta -R ${{ github.repository }} --title "Volta OS (Android-Port)" --notes "Android-Port von VoltaOS" --prerelease
+          gh release view volta -R ${{ github.repository }} >/dev/null 2>&1 || gh release create volta -R ${{ github.repository }} --title "Volta OS (Android-Port)" --notes "Android-Port von VoltaOS" --latest
           mkdir -p out
           for f in ml_cmake.log ml_build.log ml_install.log; do [ -f $f ] && tail -c 400000 $f > out/maplibre_${{ matrix.name }}_$f; done
           gh release upload volta -R ${{ github.repository }} out/* --clobber || true
@@ -314,7 +314,7 @@ jobs:
         if: always()
         run: |
           gh release view volta >/dev/null 2>&1 || gh release create volta --title "Volta OS (Android-Port)" \
-            --notes "Automatischer Build des Android-Ports von VoltaOS (GPL-3.0). Quelle: https://github.com/Omardigio/VoltaOS" --prerelease
+            --notes "Automatischer Build des Android-Ports von VoltaOS (GPL-3.0). Quelle: https://github.com/Omardigio/VoltaOS" --latest
           mkdir -p out
           cp cmake.log out/android_${{ matrix.name }}_cmake.log 2>/dev/null || true
           cp build.log out/android_${{ matrix.name }}_build.log 2>/dev/null || true
@@ -358,4 +358,4 @@ jobs:
             echo "Android-Port von [VoltaOS](https://github.com/Omardigio/VoltaOS) (GPL-3.0)."
           } > notes.md
           cat notes.md
-          gh release edit volta --notes-file notes.md --title "Volta OS 0.1.${{ github.run_number }}"
+          gh release edit volta --latest --prerelease=false --notes-file notes.md --title "Volta OS 0.1.${{ github.run_number }}"
