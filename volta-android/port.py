@@ -7,6 +7,7 @@ kommt ueber Platzhalter aus diesem Verzeichnis (shim/, qmlstubs/). GPL-3.0-or-la
 """
 import re
 import sys
+import shutil
 from pathlib import Path
 
 root = Path(sys.argv[1])
@@ -1369,3 +1370,95 @@ patch("qml/MarsMap.qml", [
 for qml in (root / "qml").rglob("*.qml"):
     if re.search(r'name:\s*[\"\x27]maplibre[\"\x27]', qml.read_text(encoding="utf-8")):
         sys.exit(f"port.py: native MapLibre renderer still enabled in {qml}")
+
+# German is an additional interface language, using Volta's existing persisted
+# language choice and QQmlEngine::retranslate(), not a separate German UI.
+port_dir = Path(__file__).resolve().parent
+(root / "i18n").mkdir(exist_ok=True)
+shutil.copyfile(port_dir / "i18n/volta_de.ts", root / "i18n/volta_de.ts")
+patch("CMakeLists.txt", [
+    (r'TS_FILES i18n/volta_it.ts', 'TS_FILES i18n/volta_de.ts i18n/volta_it.ts', 1),
+    (r'(    SOURCES \$\{CMAKE_CURRENT_SOURCE_DIR\}/qml .*?)(\n    INCLUDE_DIRECTORIES)',
+     r'\1 ${VOLTA_PORT_DIR}/portqml ${VOLTA_PORT_DIR}/qmlstubs ${VOLTA_PORT_DIR}/android_limits.cpp ${VOLTA_PORT_DIR}/android_tpms.cpp ${VOLTA_PORT_DIR}/android_update.cpp\2', 1),
+])
+patch("src/core/LanguageManager.cpp", [
+    (r'"en", "it", "es", "fr", "pt"', '"en", "it", "es", "fr", "pt", "de"', 1),
+    (r'(    m_code = code;)', r'\1\n    QLocale::setDefault(QLocale(code));', 1),
+    (r'(    if \(code == "es"\))', '    if (code == "de") return QStringLiteral("Deutsch");\n' + r'\1', 1),
+    (r'if \(code == "it"\) return QStringLiteral\("English"\)', 'if (code == "it") return QStringLiteral("Italiano")', 1),
+    (r'    QTimer::singleShot\(600, this, \[\]\(\) \{', '#ifndef Q_OS_ANDROID\n    QTimer::singleShot(600, this, []() {', 1),
+    (r'(    \}\);\n    emit codeChanged\(\);)', r'    });\n#endif\n    emit codeChanged();', 1),
+])
+patch("qml/LanguagePicker.qml", [
+    (r'\{ c: "en", n: "English" \}', '{ c: "en", n: "English" }, { c: "de", n: "Deutsch" }', 1),
+])
+patch("qml/Settings.qml", [
+    (r'60 \+ 6 \+ 5 \* 56 \+ 8', '60 + 6 + langPickS.langs.length * 56 + 8', 1),
+])
+patch("qml/FlagIcon.qml", [
+    (r'(        Canvas \{   // Regno Unito)', r'''        Column {
+            visible: flag.code === "de"
+            anchors.fill: parent
+            Rectangle { width: parent.width; height: parent.height / 3; color: "#000000" }
+            Rectangle { width: parent.width; height: parent.height / 3; color: "#DD0000" }
+            Rectangle { width: parent.width; height: parent.height / 3; color: "#FFCE00" }
+        }
+\1''', 1),
+])
+patch("qml/WeatherPopup.qml", [
+    (r'"&localityLanguage=it"', '"&localityLanguage=" + encodeURIComponent(Lang.code)', 1),
+])
+
+# Previously unmarked English/Italian labels must participate in retranslate.
+for path, replacements in {
+    "qml/Settings.qml": [(r'"On"', 'qsTr("On")', 2), (r'" alle "', 'qsTr(" to ")', 1)],
+    "qml/CarPanel.qml": [(r'"COOLANT °C"', 'qsTr("COOLANT °C")', 1),
+        (r'"OIL °C"', 'qsTr("OIL °C")', 1), (r'"BOOST BAR"', 'qsTr("BOOST BAR")', 1),
+        (r'"BATTERY V"', 'qsTr("BATTERY V")', 1), (r'"FUEL %"', 'qsTr("FUEL %")', 1),
+        (r'"RANGE KM"', 'qsTr("RANGE KM")', 1), (r'"RPM"', 'qsTr("RPM")', 1),
+        (r'"Drag right  \\u203A"', r'qsTr("Drag right  \\u203A")', 1),
+        (r'"\\u2039  Drag left"', r'qsTr("\\u2039  Drag left")', 1)],
+    "qml/CarScene.qml": [(re.escape('"PICK: click the parts that float (tap here = reset)"'), 'qsTr("PICK: click the parts that float (tap here = reset)")', 1)],
+    "qml/PodcastDashboard.qml": [(r'" rimanenti"', 'qsTr(" remaining")', 2)],
+    "qml/Theater.qml": [(r'text: "THEATER"', 'text: qsTr("THEATER")', 1)],
+    "qml/MapLibreView.qml": [(r'"tra "', 'qsTr("in ")', 1)],
+}.items():
+    patch(path, replacements)
+
+# Keep the raw backend state independent of the interface language. Reading a
+# translated getter also depends on Lang.code, so changing language updates it.
+for qml in (root / "qml").rglob("*.qml"):
+    s = qml.read_text(encoding="utf-8")
+    s = re.sub(r'\b(VoltaLimits\.status|VoltaTpms\.status|VoltaUpdate\.message)\b', r'(Lang.code, \1)', s)
+    qml.write_text(s, encoding="utf-8")
+
+# Route/waypoint names are visible to the driver; they were hardcoded Italian.
+patch("src/nav/NavigationManager.cpp", [
+    (r'#include "NavigationManager.h"', '#include "NavigationManager.h"\n#include <QLocale>', 1),
+    (r'q.addQueryItem\("language", "it"\)', 'q.addQueryItem("language", QLocale().name().section(\'_\', 0, 0))', 1),
+    (r'QStringLiteral\("Tappa"\)', 'QCoreApplication::translate("NavigationManager", "Waypoint")', 3),
+    (r'QStringLiteral\("Destinazione"\)', 'QCoreApplication::translate("NavigationManager", "Destination")', 2),
+])
+for text in ["Runs the background services (music, maps, phone)", "Install it from the terminal:",
+    "Python libraries", "All the Python libraries of the services are installed", "Missing: ",
+    "Music, maps, podcasts and phone will not fully work without them. Install them from the terminal:",
+    "Plays music, podcasts and radio", "Volume, audio devices and calls", "Wi-Fi in the Settings",
+    "Bluetooth, phone contacts, SMS and music from the phone", "CarPlay / Android Auto dongle",
+    "Plays Spotify through Spotify Connect", "System equalizer in the Settings"]:
+    old = 'QStringLiteral("' + text + '")'
+    count = (root / "src/core/SetupManager.cpp").read_text(encoding="utf-8").count(old)
+    if not count:
+        sys.exit(f"port.py: dependency description missing: {text}")
+    patch("src/core/SetupManager.cpp", [(re.escape(old), 'tr("' + text + '")', count)])
+
+# Labels in built-in app and Toybox models are interface text too. Leave IDs,
+# external app names, game titles, file paths and protocol values intact.
+local_names = {"Theater", "Toybox", "Camera", "Settings", "Colorizer", "Romance",
+    "No sound", "Pants Ripper", "Absurd toot", "Neural stench", "Boring toot",
+    "Verified toot", "Random", "Notizie", "Commedia"}
+for qml in (root / "qml").rglob("*.qml"):
+    s = qml.read_text(encoding="utf-8")
+    def translated_name(m):
+        return m[1] + ('qsTr("' + m[2] + '")' if m[2] in local_names else '"' + m[2] + '"')
+    s = re.sub(r'(\bname:\s*)"([^"\n]+)"', translated_name, s)
+    qml.write_text(s, encoding="utf-8")

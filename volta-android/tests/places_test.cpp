@@ -52,6 +52,7 @@ protected:
 };
 class PlacesTest : public QObject {
     Q_OBJECT
+    QLocale previousLocale;
     struct Result {int status;QByteArray data;QJsonObject object()const{return QJsonDocument::fromJson(data).object();}QJsonArray array()const{return QJsonDocument::fromJson(data).array();}};
     Result get(MapProxy &proxy,const QString &path) {
         QNetworkAccessManager client;auto *r=client.get(QNetworkRequest(QUrl(QString("http://127.0.0.1:%1%2").arg(proxy.port()).arg(path))));
@@ -62,7 +63,21 @@ class PlacesTest : public QObject {
     const QString bbox="?s=52.5200&w=13.4040&n=52.5202&e=13.4042";
 private slots:
     void init(){for(auto name:{"MAPTILER_KEY","TOMTOM_KEY","OWM_KEY"})qunsetenv(name);}
-    void cleanup(){init();}
+    void cleanup(){init();QLocale::setDefault(previousLocale);}
+    void selectedLanguageControlsSearchAndReverseGeocoding() {
+        QLocale::setDefault(QLocale("de_DE"));
+        qputenv("TOMTOM_KEY","dummy-language-test");
+        QTemporaryDir dir; Providers net; MapProxy proxy(nullptr,&net,dir.path(),0);
+        QCOMPARE(get(proxy,"/poi-search?q=Berlin&lat=52.52&lon=13.4").status,200);
+        QCOMPARE(QUrlQuery(net.urls.last()).queryItemValue("language"),"de-DE");
+        qputenv("MAPTILER_KEY","dummy-map-language-test");
+        QCOMPARE(get(proxy,"/reverse-geocode?lat=52.52&lon=13.4").status,200);
+        QCOMPARE(QUrlQuery(net.urls.last()).queryItemValue("language"),"de");
+        qunsetenv("MAPTILER_KEY");
+        net.tomtom=R"({"addresses":[{"address":{"streetName":"Test Street","municipality":"Test City"}}]})";
+        QCOMPARE(get(proxy,"/reverse-geocode?lat=52.52&lon=13.4").status,200);
+        QCOMPARE(QUrlQuery(net.urls.last()).queryItemValue("language"),"de-DE");
+    }
     void osmPoisDownloadInBackgroundAndSurviveRestart() {
         QTemporaryDir dir;Providers net;
         {

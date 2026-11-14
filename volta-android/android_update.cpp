@@ -71,7 +71,16 @@ public:
 #endif
     }
     int progress() const { return m_progress; }
-    QString message() const { return m_message; }
+    QString message() const {
+        if (m_message == "no connection to GitHub") return tr("No connection to GitHub");
+        if (m_message == "allow \"Install unknown apps\" for Volta, then tap Install again")
+            return tr("Allow \"Install unknown apps\" for Volta, then tap Install again");
+        if (m_message.startsWith("install failed: ")) return tr("Installation failed: %1").arg(m_message.mid(16));
+        if (m_message == "preparing installation…") return tr("Preparing installation…");
+        if (m_message == "cannot write update file") return tr("Cannot write update file");
+        if (m_message == "download failed, retrying later") return tr("Download failed; retrying later");
+        return m_message;
+    }
 
     Q_INVOKABLE void check()
     {

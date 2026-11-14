@@ -7,6 +7,26 @@ Der VoltaOS-Quellcode wird beim Build von GitHub geholt (fester Commit, siehe Wo
 
 Lizenz dieser Port-Schicht: GPL-3.0-or-later (wie VoltaOS).
 
+## Deutsche Oberfläche
+
+**Settings → System → Language → Deutsch** schaltet die Oberfläche sofort um.
+Deutsch ist auch im Sprachwähler des Einrichtungsassistenten verfügbar; die Auswahl
+wird gespeichert und beim nächsten Start wieder geladen. Die bisherigen Sprachen
+bleiben auswählbar. Die Tastatursprache wird weiterhin separat eingestellt.
+
+Der deutsche Qt-Katalog enthält die Texte des gepatchten Android-Ports, einschließlich
+Einstellungen, Fahrzeugansicht, OBD-/Reifendruckhinweisen, Schildererkennung,
+Kamera, Updates, Medien und Browser-Bedienung. Zuvor fest eingebaute englische
+und italienische Beschriftungen werden ebenfalls übersetzt. Neue Routenanweisungen,
+Ortssuche und Wetter-Ortsnamen verwenden die gewählte Sprache. Webseiten,
+Musiktitel, App-Namen fremder Anbieter und technische Diagnose-Rohdaten bleiben
+Inhalte des jeweiligen Anbieters. Android-Systemdialoge folgen der Systemsprache.
+
+`i18n/check.py` extrahiert beim Build die tatsächlich verwendeten Texte erneut und
+bricht bei fehlenden Übersetzungen oder beschädigten Platzhaltern ab. Qt-Tests
+prüfen den eingebetteten Katalog, Live-Umschaltung, gespeicherte Auswahl und den
+tatsächlichen Sprachwähler. Das Fahrzeugmodell und das Layout werden nicht ersetzt.
+
 ## Karten-Kompatibilität auf Android
 
 Das K706 mit PowerVR Rogue GE8322 stürzt in 0.1.73 beim Zeichnen durch

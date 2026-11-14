@@ -63,11 +63,11 @@ Item {
             wrapMode: Text.WordWrap
             color: "#7A8794"
             font.pixelSize: 18
-            text: root.portError || "The web view could not be opened. Check that Android System WebView is installed and enabled."
+            text: root.portError || qsTr("The web view could not be opened. Check that Android System WebView is installed and enabled.")
         }
         Row {
             anchors.horizontalCenter:parent.horizontalCenter;anchors.bottom:parent.bottom;anchors.bottomMargin:24;spacing:12
-            Repeater { model:["Reload","Open in browser"]
+            Repeater { model:[qsTr("Reload"),qsTr("Open in browser")]
                 Rectangle {width:160;height:44;radius:8;color:"#3A3A3A"
                     Text {anchors.centerIn:parent;text:modelData;color:"white";font.pixelSize:14}
                     MouseArea {anchors.fill:parent;onClicked:index===0?root.reload():Qt.openUrlExternally(root.url)}

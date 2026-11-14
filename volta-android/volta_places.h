@@ -319,7 +319,7 @@ class Services : public QObject {
     // TomTom kennt nur volle Kennungen wie de-DE; Qt liefert oft nur "de" -> HTTP 400.
     static QString tomtomLanguage() {
         static const QStringList known={"de-DE","en-GB","en-US","fr-FR","it-IT","es-ES","nl-NL","pl-PL","tr-TR","pt-PT","pt-BR","cs-CZ","da-DK","sv-SE","nb-NO","fi-FI","hu-HU","el-GR","ru-RU","ro-RO","sk-SK","sl-SI","hr-HR","bg-BG","uk-UA"};
-        const QString full=QLocale::system().name().replace(QLatin1Char('_'),QLatin1Char('-'));
+        const QString full=QLocale().name().replace(QLatin1Char('_'),QLatin1Char('-'));
         if(known.contains(full)) return full;
         const QString lang=full.section(QLatin1Char('-'),0,0);
         for(const QString &k:known) if(k.startsWith(lang+QLatin1Char('-'))) return k;
@@ -359,7 +359,7 @@ class Services : public QObject {
         const auto api=key("MAPTILER_KEY");if(api.isEmpty()){json(s,503,QJsonArray());return;}
         const auto base=QUrl::fromEncoded("https://api.maptiler.com/geocoding/"+QUrl::toPercentEncoding(text)+".json");
         auto url=parameters(base,{{"key",api},{"proximity",QString::number(lon,'f',5)+","+QString::number(lat,'f',5)},
-            {"limit","10"},{"language",QLocale::system().name().section('_',0,0)}});
+            {"limit","10"},{"language",QLocale().name().section('_',0,0)}});
         request("search-"+hash(url.toEncoded()),url,{},600,[this,s,lat,lon](int status,const QByteArray &bytes){
             const auto root=QJsonDocument::fromJson(bytes).object();
             json(s,status==200 && root["features"].isArray() ? 200 : status==200 ? 502 : status,places(bytes,false,lat,lon));
@@ -392,7 +392,7 @@ class Services : public QObject {
         const bool maptiler=!mt.isEmpty();
         auto url=parameters(QUrl(maptiler ? QString("https://api.maptiler.com/geocoding/%1,%2.json").arg(lon,0,'f',4).arg(lat,0,'f',4) :
             QString("https://api.tomtom.com/search/2/reverseGeocode/%1,%2.json").arg(lat,0,'f',4).arg(lon,0,'f',4)),
-            {{"key",maptiler ? mt : tt},{"language",QLocale::system().name().section('_',0,0)}});
+            {{"key",maptiler ? mt : tt},{"language",maptiler ? QLocale().name().section('_',0,0) : tomtomLanguage()}});
         request("reverse-"+hash(url.toEncoded()),url,{},600,[this,s,maptiler,empty](int status,const QByteArray &bytes){
             if(status!=200){json(s,status,empty);return;}
             const auto root=QJsonDocument::fromJson(bytes).object();QString street,city;
