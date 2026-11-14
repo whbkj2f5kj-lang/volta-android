@@ -1129,3 +1129,95 @@ patch("qml/Main.qml", [
 patch("qml/Settings.qml", [
     (r'^        property bool   lowPower:   false\n', '        property bool   lowPower:   true\n', 1),
 ])
+
+# ── Schneller Start: Apps erst beim ersten Oeffnen bauen, Spiegel-Auto nur ohne Sparmodus, ungenutzte Apps aus ──
+def _lazy(path, header, app_ids, loader_id):
+    """Wickelt einen App-Block (8 Leerzeichen eingerueckt) in einen Loader, der erst beim
+    ersten Oeffnen aktiv wird und danach bestehen bleibt. Anordnung/Sichtbarkeit wandern
+    an den Loader, alles andere (id, Signale, Eigenschaften) bleibt in der App."""
+    p = root / path
+    s = p.read_text(encoding="utf-8")
+    m = re.search(r'^        ' + re.escape(header) + r' \{\n', s, flags=re.M)
+    if not m:
+        sys.exit(f"port.py: {path}: {header} nicht gefunden")
+    start = m.start()
+    i = m.end(); depth = 1
+    while depth:
+        c = s[i]
+        if c == '{': depth += 1
+        elif c == '}': depth -= 1
+        i += 1
+    end = i + 1 if s[i:i + 1] == '\n' else i
+    body = s[m.end():i - 1]
+    lines = body.split('\n')
+    move_re = re.compile(r'^            (anchors\.fill:|anchors\.bottomMargin:|Behavior on anchors\.bottomMargin|opacity:|visible:|z:|Behavior on opacity)')
+    moved, kept = [], []
+    for ln in lines:
+        (moved if move_re.match(ln) else kept).append(ln)
+    cond = " || ".join('panel.activeApp === "%s"' % a for a in app_ids)
+    out = ['        Loader {',
+           '            id: %s' % loader_id,
+           '            property bool ever: false',
+           '            active: ever || %s' % cond,
+           '            onLoaded: ever = true']
+    out += moved
+    out += ['            sourceComponent: Component {',
+            '            ' + header + ' {']
+    out += ['    ' + ln if ln.strip() else ln for ln in kept]
+    out += ['            }', '            }', '        }', '']
+    s = s[:start] + '\n'.join(out) + s[end:]
+    p.write_text(s, encoding="utf-8")
+
+_lazy("qml/AppPanel.qml", "Settings", ["settings"], "settingsLoader")
+_lazy("qml/AppPanel.qml", "Theater", ["theater"], "theaterLoader")
+_lazy("qml/AppPanel.qml", "BrowserApp", ["browser", "webapp"], "browserLoader")
+_lazy("qml/AppPanel.qml", "MessagesApp", ["messages"], "messagesLoader")
+_lazy("qml/AppPanel.qml", "CalendarApp", ["calendar"], "calendarLoader")
+_lazy("qml/AppPanel.qml", "Toybox", ["toybox"], "toyboxLoader")
+_lazy("qml/AppPanel.qml", "CameraApp", ["camera"], "cameraLoader")
+_lazy("qml/AppPanel.qml", "BluetoothApp", ["bluetooth"], "bluetoothLoader")
+patch("qml/AppPanel.qml", [
+    (r'settingsView\.openAudioTab\(1\)', 'panel._settings().openAudioTab(1)', 1),
+    (r'var i = settingsView\.pages\.indexOf\(name\)\n(\s*)if \(i >= 0\) settingsView\.pageIdx = i',
+     r'var sv = panel._settings()\n\1var i = sv.pages.indexOf(name)\n\1if (i >= 0) sv.pageIdx = i', 1),
+    (r'if \(!panel\._settingsTarget\) settingsView\.pageIdx = 0',
+     'if (!panel._settingsTarget && settingsLoader.item) settingsLoader.item.pageIdx = 0', 1),
+    (r'^    property string activeApp: ""\n',
+     '    property string activeApp: ""\n'
+     '    // Android-Port: Einstellungen werden erst beim ersten Oeffnen gebaut\n'
+     '    function _settings() { settingsLoader.ever = true; return settingsLoader.item }\n', 1),
+    (r'case "theater":     return theaterItem\.webView', 'case "theater":     return theaterLoader.item ? theaterLoader.item.webView : null', 1),
+    (r'case "browser":     return browserView\.webView', 'case "browser":     return browserLoader.item ? browserLoader.item.webView : null', 1),
+    (r'arcadeItem\.goBack\(\) : theaterItem\.goBack\(\)', 'arcadeItem.goBack() : (theaterLoader.item && theaterLoader.item.goBack())', 1),
+    (r'browser: browserView\n', 'browser: browserLoader.item\n', 1),
+    (r'messagesView\.openChat\(number, name \|\| ""\)',
+     'messagesLoader.ever = true; if (messagesLoader.item) messagesLoader.item.openChat(number, name || "")', 1),
+    (r'&& toyboxView\.immersiveActive', '&& (toyboxLoader.item ? toyboxLoader.item.immersiveActive : false)', 1),
+    (r'bluetoothView\.searchExpanded = false; bluetoothView\.playerVisible = true',
+     'bluetoothLoader.ever = true; if (bluetoothLoader.item) { bluetoothLoader.item.searchExpanded = false; bluetoothLoader.item.playerVisible = true }', 1),
+])
+# Spiegelung des Autos auf dem Boden: im Sparmodus ohnehin unsichtbar -> Modell gar nicht erst laden
+patch("qml/CarScene.qml", [
+    (r'^(\s*)visible: root\.userCarActive && !root\.replacing\n(\s*)file: root\.userCarActive \? CarModels\.carFile : ""\n(\s*)parts: root\._carInfo\.parts \|\| \(\{\}\)\n(\s*)names: root\._carInfo\.names \|\| \[\]\n(\s*)mats: root\._carInfo\.mats \|\| \[\]\n(\s*)rows: root\._carInfo\.rows \|\| \[\]\n(\s*)pivots: root\._carInfo\.pivots \|\| \[\]\n(\s*)userYaw: root\.layout\.yawExtra\n(\s*)angles: \(root\._carInfo\.parts && root\._carInfo\.parts\.angles\) \|\| \(\{\}\)\n(\s*)position: Qt\.vector3d\(root\.layout\.carX, -0\.5 \+ root\.layout\.carY, 0\)\n(\s*)userScale: root\.layout\.carScale\n(\s*)hoodOpen: root\._hood\n(\s*)doorL: root\._doorL\n(\s*)doorR: root\._doorR\n(\s*)trunkOpen: root\._hatch\n(\s*)wheelSpin: root\.wheelSpin\n(\s*)reflection: true',
+     r'\1visible: root.userCarActive && !root.replacing && !root.lowPower\n'
+     r'\2file: root.userCarActive && !root.lowPower ? CarModels.carFile : ""   // Android-Port: Spiegelung nur ohne Sparmodus\n'
+     r'\3parts: root._carInfo.parts || ({})\n\4names: root._carInfo.names || []\n\5mats: root._carInfo.mats || []\n'
+     r'\6rows: root._carInfo.rows || []\n\7pivots: root._carInfo.pivots || []\n\8userYaw: root.layout.yawExtra\n'
+     r'\9angles: (root._carInfo.parts && root._carInfo.parts.angles) || ({})\n'
+     r'\10position: Qt.vector3d(root.layout.carX, -0.5 + root.layout.carY, 0)\n\11userScale: root.layout.carScale\n'
+     r'\12hoodOpen: root._hood\n\13doorL: root._doorL\n\14doorR: root._doorR\n\15trunkOpen: root._hatch\n'
+     r'\16wheelSpin: root.wheelSpin\n\17reflection: true', 1),
+])
+# Ungenutzte Apps einmalig ausblenden (Theater, Arcade, Nachrichten, Kalender); in den Einstellungen wieder einschaltbar
+patch("qml/Main.qml", [
+    (r'^        property string hiddenApps: ""\n',
+     '        property string hiddenApps: ""\n        property bool   portHiddenV1: false\n', 1),
+    (r'^            if \(AndroidPort\.android\) uiPrefs\.lowPower = true',
+     '            if (AndroidPort.android && !uiPrefs.portHiddenV1) {\n'
+     '                var h = uiPrefs.hiddenApps.length ? uiPrefs.hiddenApps.split(",") : []\n'
+     '                for (var x of ["theater", "arcade", "messages", "calendar"]) if (h.indexOf(x) < 0) h.push(x)\n'
+     '                uiPrefs.hiddenApps = h.join(",")\n'
+     '                uiPrefs.portHiddenV1 = true\n'
+     '            }\n'
+     '            if (AndroidPort.android) uiPrefs.lowPower = true', 1),
+])

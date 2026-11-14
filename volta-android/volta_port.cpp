@@ -13,6 +13,7 @@
 
 #include <QGuiApplication>
 #include <QWindow>
+#include <QQuickWindow>
 #include <QTimer>
 #ifdef Q_OS_ANDROID
 #include <QScreen>
@@ -386,6 +387,27 @@ static void voltaPortPrepare()
         QFile f(stampFile);
         if (f.open(QIODevice::WriteOnly)) f.write(VOLTA_PORT_STAMP);
         qInfo().noquote() << "[port] files unpacked:" << n << "->" << dst;
+    }
+    // Startbild ausblenden, sobald Volta das erste Bild gezeichnet hat (spaetestens nach 2 Minuten)
+    {
+        auto *poll = new QTimer(qApp);
+        poll->setInterval(200);
+        QObject::connect(poll, &QTimer::timeout, qApp, [poll]() {
+            static int tries = 0;
+            for (QWindow *w : QGuiApplication::topLevelWindows())
+                if (auto *qw = qobject_cast<QQuickWindow *>(w)) {
+                    poll->stop(); poll->deleteLater();
+                    QObject::connect(qw, &QQuickWindow::frameSwapped, qApp, []() {
+                        static bool done = false;
+                        if (done) return;
+                        done = true;
+                        QMetaObject::invokeMethod(qApp, []() { QNativeInterface::QAndroidApplication::hideSplashScreen(250); }, Qt::QueuedConnection);
+                    }, Qt::DirectConnection);
+                    return;
+                }
+            if (++tries > 600) { poll->stop(); poll->deleteLater(); QNativeInterface::QAndroidApplication::hideSplashScreen(0); }
+        });
+        poll->start();
     }
     // API-Schluessel uebernehmen: keys.env in Android/data/de.jarvis.volta/files/ (derselbe Ordner wie die Logs)
     // wird in Voltas keys.env eingetragen und danach geloescht, damit sie nicht offen herumliegt.

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Startbild: schlichtes "V" im Volta-Stil -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp" android:height="120dp"
+    android:viewportWidth="120" android:viewportHeight="120">
+    <path android:fillColor="#F0F0F0"
+        android:pathData="M18,24 L36,24 L60,82 L84,24 L102,24 L68,100 L52,100 Z"/>
+</vector>
