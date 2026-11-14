@@ -10,6 +10,7 @@
 // Places/radar routes: volta_places.h. Fuel prices are not included.
 // GPL-3.0-or-later
 #include <QCoreApplication>
+#include <QBuffer>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
@@ -17,6 +18,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHostAddress>
+#include <QImageReader>
+#include <QPainter>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -24,6 +27,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
@@ -419,6 +423,81 @@ private:
         const QString maptiler = envKey("MAPTILER_KEY");
 
         if (path == QLatin1String("/ping")) { reply(s, 200, "text/plain", "ok"); return; }
+        // Qt's OSM raster engine uses Qt Quick's own tile nodes. It does not call
+        // the MapLibre OpenGL renderer that crashes in the K706 PowerVR driver.
+        if (path.startsWith(QLatin1String("/raster-providers/"))) {
+            const QString provider = path.mid(18);
+            const QHash<QString, QString> styles{{"street", "light"}, {"satellite", "sat"},
+                {"cycle", "light"}, {"transit", "light"}, {"night-transit", "dark"},
+                {"terrain", "satnight"}, {"hiking", "light"}};
+            if (!styles.contains(provider)) { reply(s, 404, "text/plain", {}); return; }
+            if (!m_saidRaster) {
+                m_saidRaster = true;
+                qInfo() << "[mapproxy] renderer: Qt Location OSM raster (native MapLibre rendering bypassed)";
+            }
+            const QString style = styles.value(provider);
+            const bool satellite = style.startsWith("sat");
+            const QString base = QStringLiteral("http://127.0.0.1:%1").arg(port());
+            const QJsonObject meta{{"Enabled", true}, {"ImageFormat", "png"},
+                {"UrlTemplate", base + "/raster/" + style + "/%z/%x/%y.png"},
+                {"MapCopyRight", satellite ? "<a href='https://www.maptiler.com/copyright/'>© MapTiler</a>" : "<a href='https://carto.com/attributions'>© CARTO</a>"},
+                {"DataCopyRight", satellite ? "© MapTiler" : "<a href='https://www.openstreetmap.org/copyright'>© OpenStreetMap contributors</a>"},
+                {"MinimumZoomLevel", 0}, {"MaximumZoomLevel", 19},
+                {"Timestamp", "2026-11-14T00:00:00Z"}};
+            reply(s, 200, "application/json", QJsonDocument(meta).toJson(QJsonDocument::Compact));
+            return;
+        }
+        if (path.startsWith(QLatin1String("/raster/"))) {
+            static const QRegularExpression tile(QStringLiteral("^/raster/(dark|light|sat|satnight)/(0|[1-9][0-9]?)/(0|[1-9][0-9]*)/(0|[1-9][0-9]*)\\.png$"));
+            const auto match = tile.match(path);
+            bool xOk = false, yOk = false;
+            const uint z = match.captured(2).toUInt();
+            const uint x = match.captured(3).toUInt(&xOk), y = match.captured(4).toUInt(&yOk);
+            if (!match.hasMatch() || z > 19 || !xOk || !yOk || x >= (1u << z) || y >= (1u << z)) {
+                reply(s, 400, "text/plain", "invalid tile"); return;
+            }
+            const QString style = match.captured(1);
+            const bool satellite = style.startsWith("sat");
+            if (satellite && maptiler.isEmpty()) { reply(s, 404, "text/plain", "satellite key missing"); return; }
+            const QString coords = QStringLiteral("%1/%2/%3").arg(z).arg(x).arg(y);
+            const QUrl remote(satellite
+                ? "https://api.maptiler.com/tiles/satellite-v2/" + coords + ".jpg?key=" + maptiler
+                : "https://basemaps.cartocdn.com/" + style + "_all/" + coords + ".png");
+            // Reuse satellite bytes across day/night; include key hash to avoid
+            // retaining a failed/authenticated response across key changes.
+            const QString rasterDir = m_cache + "/raster";
+            const QString cacheName = md5(remote.toString());
+            fetch("raster", cacheName, remote, 7 * 86400, [s, style, rasterDir, cacheName](int st, const QByteArray &raw) {
+                if (st != 200) { reply(s, st, "text/plain", {}); return; }
+                QBuffer input; input.setData(raw); input.open(QIODevice::ReadOnly);
+                QImageReader reader(&input);
+                const QSize size = reader.size();
+                if (raw.size() > 2 * 1024 * 1024 || !size.isValid() || size.width() > 512 || size.height() > 512) {
+                    QFile::remove(rasterDir + '/' + cacheName);
+                    reply(s, 502, "text/plain", "invalid tile image"); return;
+                }
+                QImage image = reader.read();
+                if (image.isNull()) {
+                    QFile::remove(rasterDir + '/' + cacheName);
+                    reply(s, 502, "text/plain", "invalid tile image"); return;
+                }
+                if (style == "satnight") {
+                    QPainter painter(&image);
+                    painter.fillRect(image.rect(), QColor(0, 0, 0, 140));
+                }
+                QByteArray png; QBuffer output(&png); output.open(QIODevice::WriteOnly);
+                if (!image.save(&output, "PNG")) { reply(s, 502, "text/plain", {}); return; }
+                // Qt also has a bounded tile cache. Bound this shared raw-image
+                // cache as well, and never preserve an HTML/error page as a tile.
+                qint64 budget = 32 * 1024 * 1024; int count = 0;
+                for (const QFileInfo &file : QDir(rasterDir).entryInfoList(QDir::Files, QDir::Time)) {
+                    if (++count > 128 || file.size() > budget) QFile::remove(file.absoluteFilePath());
+                    else budget -= file.size();
+                }
+                reply(s, 200, "image/png", png, "public, max-age=604800");
+            });
+            return;
+        }
         if (m_places->handle(s,url)) return;
 
         if (path == QLatin1String("/style.json")) {
@@ -541,6 +620,7 @@ private:
     QString m_cache;
     QSet<QString> m_missing;
     bool m_saidStyle = false;
+    bool m_saidRaster = false;
 };
 
 } // namespace

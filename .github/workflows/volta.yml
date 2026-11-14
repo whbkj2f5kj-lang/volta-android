@@ -283,10 +283,10 @@ jobs:
           QT=$RUNNER_TEMP/Qt/$QT_VERSION
           B=$RUNNER_TEMP/vbuild   # ausserhalb des Repos: dort liegt ein fremdes settings.gradle
           chmod -R u+x $QT/*/bin $QT/*/libexec 2>/dev/null || true
-          # Run the real Qt navigation regressions before packaging.
+          # Exercise navigation and the actual raster-map plugins before packaging.
           $QT/gcc_64/bin/qt-cmake -S volta-android/tests -B $RUNNER_TEMP/port-tests -G Ninja -DVOLTA_GUI_TESTS=ON -DVOLTA_UPSTREAM_DIR=$PWD/upstream
           cmake --build $RUNNER_TEMP/port-tests --parallel 2
-          QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software ctest --test-dir $RUNNER_TEMP/port-tests --output-on-failure
+          QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software ctest --test-dir $RUNNER_TEMP/port-tests --no-tests=error --output-on-failure
           $QT/${{ matrix.qtarch }}/bin/qt-cmake -S upstream -B $B -G Ninja -DCMAKE_BUILD_TYPE=Release \
             $LAUNCH \
             -DQT_HOST_PATH=$QT/gcc_64 -DANDROID_SDK_ROOT=$ANDROID_SDK_ROOT -DANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION \
@@ -300,6 +300,7 @@ jobs:
           unzip -Z1 "$U" > apk-files.txt
           grep -Eq '^lib/[^/]+/libplugins_assetimporters_assimp_[^/]+\.so$' apk-files.txt || { echo "GLB-Importer fehlt in der APK (Assimp)"; exit 1; }
           grep -q "libQt6WebViewQuick_" apk-files.txt || { echo "Android WebView fehlt in der APK"; exit 1; }
+          grep -Eq '^lib/[^/]+/libplugins_geoservices_qtgeoservices_osm_[^/]+\.so$' apk-files.txt || { echo "Raster-Kartenrenderer fehlt in der APK"; exit 1; }
           grep -q '^assets/signnet.bin$' apk-files.txt || { echo "Schildmodell fehlt"; exit 1; }
           grep -q '^assets/efficientdet_lite0.tflite$' apk-files.txt || { echo "Fahrzeugfilter fehlt"; exit 1; }
           unzip -l "$U" | grep -i "maplibre" || { echo "MapLibre fehlt in der APK"; exit 1; }

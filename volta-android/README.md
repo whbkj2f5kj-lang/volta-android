@@ -7,6 +7,27 @@ Der VoltaOS-Quellcode wird beim Build von GitHub geholt (fester Commit, siehe Wo
 
 Lizenz dieser Port-Schicht: GPL-3.0-or-later (wie VoltaOS).
 
+## Karten-Kompatibilität auf Android
+
+Das K706 mit PowerVR Rogue GE8322 stürzt in 0.1.73 beim Zeichnen durch
+MapLibre ab (`SIGSEGV`, `libGLESv2_POWERVR_ROGUE`, `glDrawElements`).
+Das Entfernen der 3D-Gebäude hat diesen Pfad nicht beseitigt. Der Android-Port
+verwendet deshalb für Haupt- und Mini-Karte den Qt-Location-Rasterrenderer.
+Die Kartenansichten laden keine MapLibre-Stile mehr. Das separate 3D-Fahrzeug,
+das Tesla-Layout, GPS, Routen, Marker und Bedienung bleiben erhalten.
+
+Straßenkarten kommen von CARTO/OpenStreetMap, ohne API-Key; Tag/Nacht wechseln
+mit dem vorhandenen Theme. Satellitenbilder nutzen den gespeicherten MapTiler-Key,
+der Nachtmodus dunkelt die Bilder auf der CPU ab. Kartenneigung ist auf 0 begrenzt;
+die maximale Daten-Zoomstufe ist 19. Bei Netzfehlern bleibt die Oberfläche bedienbar.
+Die Radar-Schaltfläche ist vorerst deaktiviert, weil dieser Layer im bisherigen
+Vektorstil steckte. Wettervorhersage und Luftqualität sind davon unabhängig.
+Die bereits zuvor nicht verfügbare Mars-Karte wird als solche gekennzeichnet.
+
+Tests prüfen lokale Provider-Metadaten, echte Bilddecodierung, Satelliten-Nachtmodus,
+Fehlerfälle und die tatsächlichen erzeugten Qt-Plugin-Konfigurationen. Desktop-
+und Build-Tests ersetzen keinen Lauf auf der PowerVR-Hardware des Radios.
+
 ## Bedienung mit dem Drehknopf
 
 In den Einstellungen bleiben Hoch/Runter in der aktuellen Spalte und scrollen
@@ -69,6 +90,8 @@ der nicht verfuegbaren Python-Dienste. Das Layout und Voltas GPS bleiben erhalte
   RainViewer erforderlich. Zoomstufen ueber 7 vergroessert die Kartenengine; es
   wird keine hoehere Radaraufloesung behauptet. Die Regenfarben stammen vom Anbieter.
   Mehr als zwei Stunden alte Radarframes werden nicht als aktuelles Radar gezeigt.
+  Diese Dienstrouten bleiben vorhanden; der Radar-Layer ist im aktuellen
+  Android-Rasterrenderer noch nicht angeschlossen (siehe Karten-Kompatibilität).
 
 Provider-Keys bleiben in der vorhandenen privaten `keys.env`. Such-/Umgebungspunkte
 gehen an den jeweiligen Suchanbieter, OSM-Abfragen an Overpass und Radarkacheln an

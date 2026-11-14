@@ -67,7 +67,7 @@ target_include_directories(VoltaOS BEFORE PRIVATE
 set_property(SOURCE ${VOLTA_PORT_DIR}/volta_port.cpp APPEND PROPERTY
     COMPILE_DEFINITIONS VOLTA_PORT_STAMP="${VOLTA_PORT_STAMP}")
 file(GLOB_RECURSE VOLTA_PORT_STUBS ${VOLTA_PORT_DIR}/qmlstubs/*)
-file(GLOB VOLTA_PORT_QML ${VOLTA_PORT_DIR}/portqml/*.qml)
+file(GLOB VOLTA_PORT_QML ${VOLTA_PORT_DIR}/portqml/*.qml ${VOLTA_PORT_DIR}/portqml/*.js)
 qt_add_resources(VoltaOS "volta_port_qml"
     PREFIX "/volta_port"
     BASE ${VOLTA_PORT_DIR}/portqml
@@ -1316,3 +1316,56 @@ patch("qml/Settings.qml", [
 
 patch("qml/Main.qml", [(r'(        id: appDrawer\n)',
     r'\1        onPortKnobCloseRequested: { dockBar.editMode = false; root.showGrid = false }\n', 1)])
+
+# The K706/PowerVR GE8322 crashes in MapLibre's native OpenGL renderer, even
+# without 3D buildings. Use Qt Location's raster engine in EVERY port map.
+# Volta's routes, markers, controls and separate Quick3D car remain unchanged.
+raster_import = 'import "qrc:/volta_port/RasterMap.js" as RasterMap\n'
+raster_parameters = '''
+        PluginParameter { name: "osm.mapping.providersrepository.address"; value: "http://127.0.0.1:9098/raster-providers/" }
+        PluginParameter { name: "osm.mapping.cache.directory"; value: StandardPaths.writableLocation(StandardPaths.CacheLocation) + "/volta-raster-v1" }
+        PluginParameter { name: "osm.mapping.cache.disk.size"; value: 64 * 1024 * 1024 }
+        PluginParameter { name: "osm.mapping.cache.memory.size"; value: 8 * 1024 * 1024 }
+        PluginParameter { name: "osm.mapping.cache.texture.size"; value: 16 * 1024 * 1024 }
+        PluginParameter { name: "osm.useragent"; value: "VoltaAndroid/1 (https://github.com/whbkj2f5kj-lang/volta-android)" }
+'''
+patch("qml/MapLibreView.qml", [
+    (r'^import QtQuick\n', 'import QtQuick\n' + raster_import, 1),
+    (r'(?s)    function applyStyle\(force\) \{.*?\n    \}',
+     '    function applyStyle(force) { RasterMap.apply(map, root.lightTheme, root.mapStyle === "satellite", root.satNight) }', 1),
+    (r'(?s)    Plugin \{\n        id: mapPlugin\n.*?\n    \}\n\n    Map \{',
+     '    Plugin {\n        id: mapPlugin\n        name: "osm"\n' + raster_parameters + '    }\n\n    Map {', 1),
+    (r'maximumTilt: 65', 'maximumTilt: 0', 1),
+    (r'copyrightsVisible: false', 'copyrightsVisible: true', 1),
+    (r'if \(n > 1\) \{ map.activeMapType = map.supportedMapTypes\[\(root.styleIndex \+ 1\) % n\]; root.applyStyle\(true\) \}',
+     'root.applyStyle(true)', 1),
+    # Radar is baked into the vector style. Do not present its toggle as working
+    # while using raster tiles; keep its place in the existing toolbar.
+    (r'(    +Item \{\n)(    +width: root.barH\n    +height: root.barH\n    +Image \{\n    +id: weatherImg\n)',
+     r'\1                    enabled: false; opacity: 0.35\n\2', 1),
+])
+patch("qml/MapLibreMini.qml", [
+    (r'^import QtQuick\n', 'import QtQuick\nimport QtCore\n' + raster_import, 1),
+    (r'(?s)    function reloadStyle\(\) \{.*?\n    \}',
+     '    function reloadStyle() { root.applyStyle() }', 1),
+    (r'(?s)    function applyStyle\(\) \{.*?\n    \}',
+     '    function applyStyle() { RasterMap.apply(root.map, root.lightTheme, false, false) }', 1),
+    (r'(?s)                plugin: Plugin \{.*?\n                \}',
+     '                onSupportedMapTypesChanged: root.applyStyle()\n                plugin: Plugin {\n                    name: "osm"\n' + raster_parameters + '                }', 1),
+    (r'(            root._maybeReveal\(\)\n)', r'\1            root.applyStyle()\n', 1),
+    (r'copyrightsVisible: false', 'copyrightsVisible: true', 1),
+])
+# Mars was already unavailable in the Android service. Its hidden map must not
+# reintroduce MapLibre either; show that limitation instead of a GL crash.
+patch("qml/MarsMap.qml", [
+    (r'name: "maplibre"', 'name: "osm"', 1),
+    (r'PluginParameter \{ name: "maplibre.map.styles"; value: "http://127.0.0.1:9098/style.json\?s=mars" \}',
+     'PluginParameter { name: "osm.mapping.providersrepository.disabled"; value: true }\n'
+     '            PluginParameter { name: "osm.mapping.custom.host"; value: "http://127.0.0.1:9098/raster/mars/" }', 1),
+    (r'(        zoomLevel: mars.startZoom\n)',
+     r'        activeMapType: supportedMapTypes.length ? supportedMapTypes[supportedMapTypes.length - 1] : null\n\1', 1),
+    (r'text: qsTr\("Mars"\)', 'text: qsTr("Mars — map unavailable on Android")', 1),
+])
+for qml in (root / "qml").rglob("*.qml"):
+    if re.search(r'name:\s*[\"\x27]maplibre[\"\x27]', qml.read_text(encoding="utf-8")):
+        sys.exit(f"port.py: native MapLibre renderer still enabled in {qml}")
