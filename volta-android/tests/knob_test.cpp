@@ -133,6 +133,14 @@ private slots:
         QVERIFY(load("Item {width:640;height:350;property bool portKnobScope:true;function portKnobBack() {root.clicks += 10;}"+button("control",20,30)+"}"));
         key(Qt::Key_Back);QCOMPARE(window->property("clicks").toInt(),10);
     }
+    void textOnlySectionsKeepTheScrollColumn() {
+        QVERIFY(load("Item {width:640;height:350;property bool portKnobScope:true;"+button("sidebar",20,30)+"Flickable {objectName:'content';x:300;width:300;height:180;contentHeight:900;clip:true;"+button("only",20,30)+"}}"));
+        key(Qt::Key_Down);key(Qt::Key_Right);key(Qt::Key_Down);key(Qt::Key_Down);
+        auto *content=window->findChild<QQuickItem *>("content");QVERIFY(content);
+        QVERIFY(content->property("contentY").toDouble()>200);
+        key(Qt::Key_Up);key(Qt::Key_Up);
+        QVERIFY(frame() && frame()->isVisible() && frame()->x()>250);
+    }
     void actualDrawerEmitsAppSelectionFromEnter() {
         const QString sourceDir=qEnvironmentVariable("VOLTA_TEST_QML_DIR");
         if(sourceDir.isEmpty()) QSKIP("Set VOLTA_TEST_QML_DIR to a patched upstream qml directory");

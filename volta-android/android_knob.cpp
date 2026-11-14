@@ -82,7 +82,7 @@ public:
         }
         case QEvent::MouseButtonPress:
         case QEvent::TouchBegin:
-            if (!m_synth) showFrame(false);   // Finger benutzt -> Rahmen weg
+            if (!m_synth) { m_scrollOnly = false; showFrame(false); }   // Finger benutzt -> Rahmen weg
             break;
         default:
             break;
@@ -105,7 +105,7 @@ private:
             QQuickItem *scope = navigationRoot(w);
             if (scope && scope->metaObject()->indexOfMethod("portKnobBack()") >= 0) {
                 QMetaObject::invokeMethod(scope,"portKnobBack",Qt::DirectConnection);
-                showFrame(false); m_cur.clear(); return true;
+                m_scrollOnly = false; showFrame(false); m_cur.clear(); return true;
             }
             return false;
         }
@@ -123,6 +123,13 @@ private:
         if (textFocus(w)) return false;
         if (k->isAutoRepeat() && act == Press) return true;
         m_win = w;
+
+        if ((act == Up || act == Down) && m_scrollOnly && m_scrollFlick
+                && m_scrollFlick->isVisible() && m_scrollScope == navigationRoot(w)) {
+            scrollPage(m_scrollFlick, act == Down ? 1 : -1);
+            return true;
+        }
+        m_scrollOnly = false;
 
         const QList<QQuickItem *> items = candidates(w);
         if (items.isEmpty()) {
@@ -225,7 +232,12 @@ private:
         QList<QQuickItem *> rows;
         for(auto *it:visible) if(ancestorOf(flick,it)) rows<<it;
         if(!rows.isEmpty()) select(nearestTo(rows,m_lastPos));
-        else showFrame(false);
+        else {
+            m_scrollOnly = true;
+            m_scrollFlick = flick;
+            m_scrollScope = navigationRoot(m_win);
+            showFrame(false);
+        }
         return true;
     }
 
@@ -348,6 +360,7 @@ private:
     void select(QQuickItem *it)
     {
         if (!it) return;
+        m_scrollOnly = false;
         m_cur = it;
         m_lastPos = centre(it);
         qInfo().noquote() << "[knob] selected" << it->metaObject()->className()
@@ -440,11 +453,13 @@ private:
 
     QPointer<QQuickWindow> m_win;
     QPointer<QQuickItem> m_cur;
+    QPointer<QQuickItem> m_scrollFlick, m_scrollScope;
     QPointer<KnobFrame> m_frame;
     QPointF m_lastPos{0, 0};
     QTimer m_hide, m_follow;
     QSet<int> m_swallow;
     bool m_synth = false;
+    bool m_scrollOnly = false;
     int m_logged = 0;
 };
 
