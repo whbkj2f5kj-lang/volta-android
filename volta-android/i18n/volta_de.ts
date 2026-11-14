@@ -323,7 +323,7 @@
         </message>
         <message>
             <source>Search «</source>
-            <translation>Suchen: „</translation>
+            <translation>„</translation>
         </message>
         <message>
             <source>» on Google</source>
@@ -362,7 +362,7 @@
         </message>
         <message>
             <source> connect your phone to the car via Bluetooth.</source>
-            <translation> verbinde dein Telefon per Bluetooth mit dem Auto.</translation>
+            <translation> zu verwenden, verbinde dein Telefon per Bluetooth mit dem Auto.</translation>
         </message>
         <message>
             <source>Connect your phone to the car via Bluetooth.</source>
@@ -1881,7 +1881,7 @@ Aktiviere die Kontaktfreigabe auf deinem Telefon</translation>
         </message>
         <message>
             <source>left</source>
-            <translation>links</translation>
+            <translation>übrig</translation>
         </message>
         <message>
             <source>Try again shortly</source>
@@ -4110,19 +4110,19 @@ Starte eine Folge auf der Startseite oder über die Suche</translation>
         </message>
         <message>
             <source>Publish</source>
-            <translation>Veröffentlichen</translation>
+            <translation>Speichern</translation>
         </message>
         <message>
             <source>Cancel</source>
-            <translation>Abbrechen</translation>
+            <translation>Rückgängig</translation>
         </message>
         <message>
             <source>Fill</source>
-            <translation>Ausfüllen</translation>
+            <translation>Füllen</translation>
         </message>
         <message>
             <source>Sign out</source>
-            <translation>Abmelden</translation>
+            <translation>Schließen</translation>
         </message>
     </context>
     <context>

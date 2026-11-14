@@ -29,6 +29,12 @@ private slots:
             QCOMPARE(QCoreApplication::translate("Settings", "Language"), "Sprache");
             QCOMPARE(QCoreApplication::translate("VoltaLimitsQml", "Camera-confirmed speed limit"), "Durch die Kamera bestätigtes Tempolimit");
             QCOMPARE(QCoreApplication::translate("VoltaUpdateQml", "Installation failed: %1").arg("TEST"), "Installation fehlgeschlagen: TEST");
+            QCOMPARE(QCoreApplication::translate("PodcastDashboard", "left"), "übrig");
+            QCOMPARE(QCoreApplication::translate("ToyboxAlbum", "Cancel"), "Rückgängig");
+            QCOMPARE(QCoreApplication::translate("ToyboxAlbum", "Sign out"), "Schließen");
+            QCOMPARE(QCoreApplication::translate("BtRequiredOverlay", "To use ") + "TEST" +
+                QCoreApplication::translate("BtRequiredOverlay", " connect your phone to the car via Bluetooth."),
+                "Um TEST zu verwenden, verbinde dein Telefon per Bluetooth mit dem Auto.");
             QCOMPARE(QLocale().name(), "de_DE");
         }
         QQmlEngine engine;
