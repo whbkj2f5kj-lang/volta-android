@@ -283,7 +283,7 @@ jobs:
           QT=$RUNNER_TEMP/Qt/$QT_VERSION
           B=$RUNNER_TEMP/vbuild   # ausserhalb des Repos: dort liegt ein fremdes settings.gradle
           chmod -R u+x $QT/*/bin $QT/*/libexec 2>/dev/null || true
-          # Run the real Qt navigation/WebView lifecycle regressions before packaging.
+          # Run the real Qt navigation regressions before packaging.
           $QT/gcc_64/bin/qt-cmake -S volta-android/tests -B $RUNNER_TEMP/port-tests -G Ninja -DVOLTA_GUI_TESTS=ON
           cmake --build $RUNNER_TEMP/port-tests --parallel 2
           QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software ctest --test-dir $RUNNER_TEMP/port-tests --output-on-failure

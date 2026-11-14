@@ -353,7 +353,7 @@ void voltaPortRegisterKnob()
 {
     QTimer::singleShot(0, qApp, []() { qApp->installEventFilter(new KnobNavigator(qApp)); });
 #ifdef Q_OS_ANDROID
-    QTimer::singleShot(0, qApp, []() {
+    QTimer::singleShot(3000, qApp, []() {
         QJniEnvironment env;
         QJniObject::callStaticMethod<void>("de/jarvis/volta/KnobInput", "install", "(Landroid/app/Activity;)V",
                                            QNativeInterface::QAndroidApplication::context().object());
