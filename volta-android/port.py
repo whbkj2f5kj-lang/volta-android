@@ -137,7 +137,12 @@ endif()
 ''')
 
 patch("src/main.cpp", [
-    (r'^#include <QtWebEngineQuick>\n', '#include <QtWebEngineQuick>\n#ifdef Q_OS_ANDROID\n#include <QtWebView/QtWebView>\n#endif\n', 1),
+    # Schliessen nachverfolgen: wo genau haengt das Aufraeumen nach dem Ende der Ereignisschleife?
+    (r'^(\s*)qDebug\(\) << "\[T\] main\(\) entered";',
+     r'\1qDebug() << "[T] main() entered";\n#ifdef Q_OS_ANDROID\n\1struct VoltaEndMark { ~VoltaEndMark() { voltaPortCloseStage("cleanup finished, main() returns"); } } voltaEndMark;\n#endif', 1),
+    (r'^    return app\.exec\(\);\n\}',
+     '    const int voltaRc = app.exec();\n#ifdef Q_OS_ANDROID\n    voltaPortCloseStage("event loop ended, destroying objects");\n#endif\n    return voltaRc;\n}', 1),
+    (r'^#include <QtWebEngineQuick>\n', '#include <QtWebEngineQuick>\n#ifdef Q_OS_ANDROID\n#include <QtWebView/QtWebView>\nvoid voltaPortCloseStage(const char *what);\n#endif\n', 1),
     (r'    QGuiApplication app\(argc, argv\);', '    QGuiApplication app(argc, argv);\n#ifdef Q_OS_ANDROID\n    QtWebView::initialize();\n#endif', 1),
     (r'^(\s*)qputenv\("QT_QPA_PLATFORM", "xcb"\);',
      r'\1{\n#ifndef Q_OS_ANDROID\n\1qputenv("QT_QPA_PLATFORM", "xcb");\n#endif\n\1}', 1),

@@ -22,6 +22,8 @@
 #include <QJniEnvironment>
 #include <QSysInfo>
 #include <QDateTime>
+#include <QTime>
+#include <pthread.h>
 #include <QJniObject>
 #include <QMutex>
 #include <signal.h>
@@ -30,6 +32,7 @@
 #include <cstring>
 #include <unwind.h>
 #include <dlfcn.h>
+#include <thread>
 #endif
 
 #ifndef VOLTA_PORT_STAMP
@@ -211,6 +214,53 @@ static void voltaCrashSig(int sig)
     raise(sig);
 }
 
+// ---- Schliessen nachverfolgen ----
+// Volta blieb nach dem Schliessen haengen (beim naechsten Oeffnen nur "Beenden erzwingen" half).
+// Jede Etappe des Aufraeumens landet sofort im Log. Ist nach 5 s nicht alles fertig, schreibt Volta die
+// Stelle ins Log, an der der Hauptfaden steckt, und beendet den Prozess, damit der naechste Start sauber ist.
+static pthread_t g_mainThread;
+static volatile sig_atomic_t g_closeDone = 0;
+static void voltaCloseWrite(const char *a, const char *b = nullptr)
+{
+    if (g_logFd < 0) return;
+    const QByteArray t = QTime::currentTime().toString(QStringLiteral("HH:mm:ss.zzz")).toLatin1();
+    QByteArray line = t + " I [close] " + a + (b ? b : "") + "\n";
+    (void)::write(g_logFd, line.constData(), size_t(line.size()));
+    ::fsync(g_logFd);
+}
+void voltaPortCloseStage(const char *what)
+{
+    voltaCloseWrite(what);
+    if (std::strncmp(what, "cleanup finished", 16) == 0) g_closeDone = 1;
+}
+static void voltaHangSig(int)
+{
+    static const char h[] = "[close] STUCK - the main thread hangs here:\n";
+    if (g_logFd >= 0) (void)::write(g_logFd, h, sizeof(h) - 1);
+    voltaCrashTrace();
+    if (g_logFd >= 0) ::fsync(g_logFd);
+}
+static void voltaCloseWatch()
+{
+    g_mainThread = pthread_self();
+    struct sigaction sa;
+    std::memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = voltaHangSig;
+    sigaction(SIGUSR2, &sa, nullptr);
+    std::thread([]() {
+        for (int i = 0; i < 50 && !g_closeDone; ++i) ::usleep(100 * 1000);
+        if (!g_closeDone) {
+            voltaCloseWrite("cleanup not finished after 5 s");
+            pthread_kill(g_mainThread, SIGUSR2);
+            ::usleep(500 * 1000);
+        } else {
+            ::usleep(300 * 1000);
+        }
+        voltaCloseWrite("process ended (next start is a clean start)");
+        _exit(0);
+    }).detach();
+}
+
 // sehr frueh (beim Laden der Bibliothek), damit auch die ersten Zeilen von main() ankommen
 static const int g_logInstalled = []() { g_prevHandler = qInstallMessageHandler(voltaLogHandler); return 1; }();
 
@@ -258,7 +308,10 @@ static void voltaLogOpen()
             qInfo().noquote() << "[port] windows open:" << g->allWindows().size();
         }
     });
-    QObject::connect(qApp, &QCoreApplication::aboutToQuit, []() { qInfo() << "[port] app is closing normally"; });
+    QObject::connect(qApp, &QCoreApplication::aboutToQuit, []() {
+        qInfo() << "[port] app is closing normally";
+        voltaCloseWatch();
+    });
     // Speicher: alle 15 s Verbrauch der App und freier Speicher des Geraets (MB).
     // Steigt "app" stetig oder faellt "free" gegen null, ist der Speicher die Ursache.
     auto *memTimer = new QTimer(qApp);
