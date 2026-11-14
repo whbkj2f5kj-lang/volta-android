@@ -65,5 +65,11 @@
             <meta-data android:name="android.app.splash_screen_drawable" android:resource="@drawable/volta_splash"/>
             <meta-data android:name="android.app.splash_screen_sticky" android:value="true"/>
         </activity>
+        <!-- Dateiauswahl fuer keys.env (Einstellungen) -->
+        <activity
+            android:name="de.jarvis.volta.KeysPicker"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
     </application>
 </manifest>

@@ -8,6 +8,8 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QRegularExpression>
+#include <functional>
 #include <QDebug>
 #include "volta_log_sanitize.h"
 
@@ -323,6 +325,67 @@ static void voltaPortCarGuard()
 }
 #endif
 
+#ifdef Q_OS_ANDROID
+// keys.env-Inhalt uebernehmen (beim Start aus dem Log-Ordner oder per Dateiauswahl in den Einstellungen).
+// Karten-/Wetter-Schluessel -> Voltas keys.env (wirken nach Neustart), GitHub-Schluessel fuer die Logs ->
+// LogUploader (nur auf dem Radio, nicht in keys.env). Rueckgabe: kurze Meldung, leer = nichts gefunden.
+QString voltaImportKeys(const QByteArray &text)
+{
+    const QString dst = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/volta");
+    QStringList order, added;
+    QHash<QString, QString> vals;
+    QString ghToken, ghRepo;
+    auto parse = [](const QString &all, const std::function<void(const QString &, const QString &)> &fn) {
+        for (QString line : all.split(QLatin1Char('\n'))) {
+            line = line.trimmed();
+            if (line.startsWith(QLatin1String("export "))) line = line.mid(7).trimmed();
+            const int eq = line.indexOf(QLatin1Char('='));
+            if (line.startsWith(QLatin1Char('#')) || eq <= 0) continue;
+            QString v = line.mid(eq + 1).trimmed();
+            if (v.size() >= 2 && (v.startsWith(QLatin1Char('"')) || v.startsWith(QLatin1Char('\''))) && v.endsWith(v.at(0))) v = v.mid(1, v.size() - 2);
+            if (!v.isEmpty()) fn(line.left(eq).trimmed(), v);
+        }
+    };
+    QFile cur(dst + QStringLiteral("/keys.env"));
+    if (cur.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        parse(QString::fromUtf8(cur.readAll()), [&](const QString &k, const QString &v) { if (!vals.contains(k)) order << k; vals[k] = v; });
+        cur.close();
+    }
+    static const QRegularExpression ghRe(QStringLiteral("^(github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,})$"));
+    parse(QString::fromUtf8(text), [&](const QString &k, const QString &v) {
+        const QString K = k.toUpper();
+        if (K.contains(QLatin1String("REPO")) && (K.contains(QLatin1String("GITHUB")) || K.contains(QLatin1String("LOG")))) { ghRepo = v; return; }
+        if (ghRe.match(v).hasMatch()) { ghToken = v; return; }
+        if (vals.value(k) != v) added << k;
+        if (!vals.contains(k)) order << k;
+        vals[k] = v;
+        qputenv(k.toUtf8().constData(), v.toUtf8());
+    });
+    QStringList msg;
+    if (!added.isEmpty()) {
+        QDir().mkpath(dst);
+        QFile out(dst + QStringLiteral("/keys.env"));
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) return QStringLiteral("keys.env konnte nicht gespeichert werden");
+        for (const QString &k : order) out.write((k + QLatin1Char('=') + vals.value(k) + QLatin1Char('\n')).toUtf8());
+        out.close();
+        QFile::setPermissions(out.fileName(), QFile::ReadOwner | QFile::WriteOwner);
+        msg << added.join(QStringLiteral(", "));
+    }
+    if (!ghToken.isEmpty() || !ghRepo.isEmpty()) {
+        QJniEnvironment env;
+        QJniObject::callStaticMethod<void>("de/jarvis/volta/LogUploader", "storeKey",
+            "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
+            QNativeInterface::QAndroidApplication::context().object(),
+            QJniObject::fromString(ghToken).object<jstring>(), QJniObject::fromString(ghRepo).object<jstring>());
+        if (env.checkAndClearExceptions()) qWarning() << "[keys] GitHub key could not be stored";
+        else msg << (ghToken.isEmpty() ? QStringLiteral("Log-Repo") : QStringLiteral("GitHub-Schlüssel für Logs"));
+    }
+    if (msg.isEmpty() && !vals.isEmpty()) msg << QStringLiteral("nichts Neues");
+    qInfo().noquote() << "[keys] imported:" << (msg.isEmpty() ? QStringLiteral("no keys found") : msg.join(QStringLiteral("; ")));
+    return msg.join(QStringLiteral("; "));
+}
+#endif
+
 static void voltaPortPrepare()
 {
     voltaPortRegisterApps();
@@ -420,33 +483,9 @@ static void voltaPortPrepare()
         }
         QFile in(ext + QStringLiteral("/keys.env"));
         if (!ext.isEmpty() && in.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            QStringList order;
-            QHash<QString, QString> vals;
-            auto readInto = [&](QIODevice &dev) {
-                while (!dev.atEnd()) {
-                    const QString line = QString::fromUtf8(dev.readLine()).trimmed();
-                    const int eq = line.indexOf(QLatin1Char('='));
-                    if (line.startsWith(QLatin1Char('#')) || eq <= 0) continue;
-                    const QString k = line.left(eq).trimmed(), v = line.mid(eq + 1).trimmed();
-                    if (v.isEmpty()) continue;
-                    if (!vals.contains(k)) order << k;
-                    vals[k] = v;
-                }
-            };
-            QFile cur(dst + QStringLiteral("/keys.env"));
-            if (cur.open(QIODevice::ReadOnly | QIODevice::Text)) { readInto(cur); cur.close(); }
-            const int before = vals.size();
-            readInto(in);
+            const QByteArray text = in.readAll();
             in.close();
-            QFile out(dst + QStringLiteral("/keys.env"));
-            if (out.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                for (const QString &k : order) out.write((k + QLatin1Char('=') + vals.value(k) + QLatin1Char('\n')).toUtf8());
-                out.close();
-                QFile::setPermissions(out.fileName(), QFile::ReadOwner | QFile::WriteOwner);
-                QFile::remove(in.fileName());
-                qInfo().noquote() << "[keys] imported keys.env:" << order.join(QStringLiteral(", "))
-                                  << QStringLiteral("(%1 new)").arg(vals.size() - before);
-            }
+            if (!voltaImportKeys(text).isEmpty()) QFile::remove(in.fileName());
         }
     }
     qputenv("VOLTA_DIR", dst.toUtf8());

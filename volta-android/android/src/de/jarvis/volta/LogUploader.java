@@ -106,6 +106,18 @@ public final class LogUploader {
         } catch (Throwable t) { status = "Zwischenablage nicht lesbar: " + t.getMessage(); return status; }
     }
 
+    /** Aus keys.env (beim Start oder per Dateiauswahl): Schluessel und/oder Repo speichern, auch vor start(). */
+    public static void storeKey(Context ctx, String tok, String repoName) {
+        SharedPreferences p = ctx.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        SharedPreferences.Editor e = p.edit();
+        if (tok != null && !tok.isEmpty()) e.putString("token", tok.trim());
+        if (repoName != null && repoName.trim().matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+                && !repoName.trim().equals(p.getString("repo", DEFAULT_REPO))) e.putString("repo", repoName.trim()).remove("shas");
+        e.apply();
+        status = "Schlüssel aus keys.env übernommen";
+        if (worker != null && enabled()) uploadNow();
+    }
+
     public static void clearToken() {
         if (prefs == null) return;
         prefs.edit().remove("token").apply();

@@ -843,7 +843,18 @@ patch("qml/Settings.qml", [
 # Diagnose-Logs automatisch hochladen (privates GitHub-Repo), Schluessel aus der Zwischenablage
 patch("qml/Settings.qml", [
     (r'^([ \t]*)SectionTitle \{ title: qsTr\("OBD adapter"\) \}',
-     r"""\1SectionTitle { title: qsTr("Upload diagnostics") }
+     r"""\1SectionTitle { title: qsTr("Keys (keys.env)") }
+\1Text {
+\1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
+\1    text: qsTr("Select your keys.env (USB stick, Downloads …). Map and weather keys (Mapbox, MapTiler, TomTom, OpenWeather) and the GitHub key for the log upload are added automatically. The file itself stays unchanged.")
+\1}
+\1Flow {
+\1    width: parent.width; spacing: 8
+\1    TSecondary { label: qsTr("Select keys.env"); onClicked: VoltaUpload.pickKeys() }
+\1}
+\1Text { width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint; visible: text !== ""; text: VoltaUpload.keysStatus }
+\1TDivider {}
+\1SectionTitle { title: qsTr("Upload diagnostics") }
 \1Item {
 \1    width: parent.width; height: 46
 \1    Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: qsTr("Upload logs automatically"); font.pixelSize: 15; color: root.txt }
@@ -851,7 +862,7 @@ patch("qml/Settings.qml", [
 \1}
 \1Text {
 \1    width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: root.txtHint
-\1    text: qsTr("Every 5 minutes the changed log files go to the PRIVATE repo ") + VoltaUpload.repo + qsTr(". Key: ") + (VoltaUpload.hasToken ? qsTr("saved") : qsTr("missing – copy it, then tap the button"))
+\1    text: qsTr("Every 5 minutes the changed log files go to the PRIVATE repo ") + VoltaUpload.repo + qsTr(". Key: ") + (VoltaUpload.hasToken ? qsTr("saved") : qsTr("missing – select keys.env above or copy the key and tap the button"))
 \1}
 \1Flow {
 \1    width: parent.width; spacing: 8

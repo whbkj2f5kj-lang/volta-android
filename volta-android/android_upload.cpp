@@ -11,9 +11,14 @@
 #include <QJniObject>
 #endif
 
+#ifdef Q_OS_ANDROID
+QString voltaImportKeys(const QByteArray &text);   // volta_port.cpp
+#endif
+
 namespace {
 #ifdef Q_OS_ANDROID
 constexpr char kUp[] = "de/jarvis/volta/LogUploader";
+constexpr char kPick[] = "de/jarvis/volta/KeysPicker";
 #endif
 
 class VoltaUploadQml final : public QObject
@@ -23,6 +28,7 @@ class VoltaUploadQml final : public QObject
     Q_PROPERTY(bool hasToken READ hasToken NOTIFY changed)
     Q_PROPERTY(QString repo READ repo NOTIFY changed)
     Q_PROPERTY(QString status READ status NOTIFY changed)
+    Q_PROPERTY(QString keysStatus READ keysStatus NOTIFY changed)
 public:
     explicit VoltaUploadQml(QObject *parent) : QObject(parent)
     {
@@ -42,6 +48,21 @@ public:
     bool hasToken() const { return m_hasToken; }
     QString repo() const { return m_repo; }
     QString status() const { return m_status; }
+    QString keysStatus() const { return m_keysStatus; }
+
+    // keys.env ueber die Android-Dateiauswahl holen; Ergebnis kommt ueber poll()
+    Q_INVOKABLE void pickKeys()
+    {
+#ifdef Q_OS_ANDROID
+        QJniEnvironment env;
+        QJniObject::callStaticMethod<void>(kPick, "open", "(Landroid/content/Context;)V",
+                                           QNativeInterface::QAndroidApplication::context().object());
+        env.checkAndClearExceptions();
+        m_keysResult.clear();
+        m_timer.setInterval(500);
+#endif
+        poll();
+    }
 
     Q_INVOKABLE void setEnabled(bool on)
     {
@@ -95,6 +116,22 @@ private:
     {
 #ifdef Q_OS_ANDROID
         QJniEnvironment env;
+        {
+            const QString text = QJniObject::callStaticObjectMethod(kPick, "take", "()Ljava/lang/String;").toString();
+            QString ks = QJniObject::callStaticObjectMethod(kPick, "status", "()Ljava/lang/String;").toString();
+            env.checkAndClearExceptions();
+            if (!text.isEmpty()) {
+                const QString r = voltaImportKeys(text.toUtf8());
+                m_keysResult = r.isEmpty() ? QStringLiteral("Keine Schlüssel in der Datei gefunden")
+                                           : QStringLiteral("Übernommen: ") + r
+                                             + (r.contains(QLatin1String("_KEY")) || r.contains(QLatin1String("TOKEN"))
+                                                ? QStringLiteral(" – Karten/Wetter nach Neustart von Volta") : QString());
+                m_timer.setInterval(2000);
+            }
+            if (ks == QLatin1String("Datei gelesen") && !m_keysResult.isEmpty()) ks = m_keysResult;
+            else if (ks != QLatin1String("Datei auswählen …")) m_timer.setInterval(2000);
+            if (ks != m_keysStatus) { m_keysStatus = ks; m_last.clear(); }
+        }
         const QString raw = QJniObject::callStaticObjectMethod(kUp, "snapshot", "()Ljava/lang/String;").toString();
         if (env.checkAndClearExceptions() || raw == m_last) return;
         m_last = raw;
@@ -110,7 +147,7 @@ private:
     }
 
     QTimer m_timer;
-    QString m_last, m_repo, m_status = QStringLiteral("Aus");
+    QString m_last, m_repo, m_status = QStringLiteral("Aus"), m_keysStatus, m_keysResult;
     bool m_enabled = false, m_hasToken = false;
 };
 } // namespace

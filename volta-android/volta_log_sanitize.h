@@ -10,5 +10,7 @@ inline QString voltaSafeLog(QString text)
     }
     static const QRegularExpression query(QStringLiteral("([?&](?:key|access_token|token|api_key|apikey)=)[^&\\s\\\"'<>]+"), QRegularExpression::CaseInsensitiveOption);
     text.replace(query, QStringLiteral("\\1[redacted]"));
+    static const QRegularExpression github(QStringLiteral("github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}"));
+    text.replace(github, QStringLiteral("[redacted]"));
     return text;
 }
