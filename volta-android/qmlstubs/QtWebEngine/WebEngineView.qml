@@ -7,6 +7,17 @@ Item {
     enum LoadStatus { LoadStartedStatus, LoadStoppedStatus, LoadSucceededStatus, LoadFailedStatus }
     enum Feature { Geolocation, MediaAudioCapture, MediaVideoCapture, MediaAudioVideoCapture, DesktopVideoCapture, DesktopAudioVideoCapture, Notifications }
     property bool portVisible: visible
+    property bool portComplete: false
+    property bool portActivated: false
+    function portActivateIfShown() {
+        if (portComplete && portVisible && lifecycleState !== 2) portActivated = true
+    }
+    Component.onCompleted: { portComplete = true; portActivateIfShown() }
+    onPortVisibleChanged: portActivateIfShown()
+    onLifecycleStateChanged: {
+        if (lifecycleState === 2) portActivated = false
+        else portActivateIfShown()
+    }
     property bool portLoading: false
     property string portError: ""
     property url url
@@ -48,9 +59,14 @@ Item {
     Loader {
         id: native
         anchors.fill: parent
-        active: AndroidPort.android && root.lifecycleState !== 2
-        Component.onCompleted: if (active) setSource("qrc:/volta_port/AndroidWebSurface.qml", {bridge:root})
-        onActiveChanged: if (active) setSource("qrc:/volta_port/AndroidWebSurface.qml", {bridge:root})
+        active: AndroidPort.android && root.portComplete && root.portActivated && root.lifecycleState !== 2
+        // Keep an opened page alive when hidden/frozen (music/login), but never
+        // initialize a hidden page during startup or create the same WebView twice.
+        function ensureSource() {
+            if (active && String(source) === "") setSource("qrc:/volta_port/AndroidWebSurface.qml", {bridge:root})
+        }
+        Component.onCompleted: ensureSource()
+        onActiveChanged: ensureSource()
     }
     Rectangle {
         visible: !AndroidPort.android || native.status === Loader.Error || root.portError !== ""

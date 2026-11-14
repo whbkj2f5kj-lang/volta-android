@@ -7,6 +7,28 @@ Der VoltaOS-Quellcode wird beim Build von GitHub geholt (fester Commit, siehe Wo
 
 Lizenz dieser Port-Schicht: GPL-3.0-or-later (wie VoltaOS).
 
+## Drehknopf / Tasten
+
+Pfeile und Tab waehlen sichtbare Bedienelemente, Enter bestaetigt die Auswahl.
+Die erste Eingabe nach einer Pause blendet den Auswahlrahmen ein; ein Fingertipp
+blendet ihn aus. Deaktivierte Tastatur-Fangflaechen und abgeschnittene Elemente
+blockieren die Auswahl nicht. Texteingaben behalten ihre normalen Pfeiltasten.
+`[knob] selected` und `[knob] activate` bestaetigen die Verarbeitung im Qt-Log.
+
+Radio-/MCU-Listener bevorzugen vorhandene Firmware-Systemdienste. Anmeldung und
+Tasten-Dateizugriffe laufen ausserhalb der Oberflaechen-Threads; bei fehlendem
+Firmware-Zugriff bleibt die normale Android-Tasteneingabe erhalten. Der Log nennt
+die zugrunde liegende Ausnahme. Eine Firmware-Berechtigung wird nicht vorausgesetzt.
+
+Versteckte Web-Ansichten werden erst beim ersten Anzeigen erzeugt, bereits geoeffnete
+Seiten bleiben beim Verbergen/Frieren erhalten. `[ui] event loop delayed` protokolliert
+verbleibende Oberflaechen-Blockaden nach ihrer Rueckkehr. Die Wirkung auf die konkrete
+Startverzoegerung des K706 muss am Radio bestaetigt werden.
+
+Die Tests laufen im APK-Build vor der Paketierung. Lokal mit Qt Desktop:
+`cmake -S volta-android/tests -B build-tests -DVOLTA_GUI_TESTS=ON`, danach bauen
+und `ctest --test-dir build-tests --output-on-failure`.
+
 ## Updates
 
 **Settings → System → Software update** zeigt die installierte Android-Version,

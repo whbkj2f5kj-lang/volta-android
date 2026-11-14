@@ -10,7 +10,9 @@
 #include <QUrl>
 #include <QRegularExpression>
 #include <functional>
+#include <memory>
 #include <QDebug>
+#include <QElapsedTimer>
 #include "volta_log_sanitize.h"
 
 #include <QGuiApplication>
@@ -331,6 +333,17 @@ static void voltaLogOpen()
             .arg(rss).arg(peak).arg(field("/proc/meminfo", "MemAvailable:")).arg(field("/proc/meminfo", "MemTotal:"));
     });
     memTimer->start();
+    // Report recovered GUI stalls separately from OBD/network errors. This runs
+    // on the Qt GUI thread and never interrupts or terminates the process.
+    auto *uiBeat = new QTimer(qApp);
+    uiBeat->setInterval(1000);
+    auto elapsed = std::make_shared<QElapsedTimer>();
+    elapsed->start();
+    QObject::connect(uiBeat, &QTimer::timeout, [elapsed]() {
+        const qint64 gap = elapsed->restart();
+        if (gap > 3000) qWarning() << "[ui] event loop delayed by" << gap << "ms";
+    });
+    uiBeat->start();
 }
 #endif
 

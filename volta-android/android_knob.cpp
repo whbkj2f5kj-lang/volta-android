@@ -6,6 +6,7 @@
 // Texteingaben behalten ihre Tasten. Ein echter Fingertipp blendet den Rahmen aus.
 #include <QCoreApplication>
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -66,7 +67,11 @@ public:
         case QEvent::KeyPress: {
             auto *k = static_cast<QKeyEvent *>(e);
             logKey(k);
-            if (handle(w, k)) { m_swallow.insert(k->key()); return true; }
+            QElapsedTimer elapsed;
+            elapsed.start();
+            const bool handled = handle(w, k);
+            if (elapsed.elapsed() > 50) qWarning() << "[knob] navigation took" << elapsed.elapsed() << "ms";
+            if (handled) { m_swallow.insert(k->key()); return true; }
             break;
         }
         case QEvent::KeyRelease: {
@@ -111,7 +116,11 @@ private:
         m_win = w;
 
         const QList<QQuickItem *> items = candidates(w);
-        if (items.isEmpty()) return false;
+        if (items.isEmpty()) {
+            if (m_frame) showFrame(false);
+            qInfo() << "[knob] no selectable controls in the current view";
+            return false;
+        }
         const bool wasVisible = m_frame && m_frame->isVisible();
         QQuickItem *cur = m_cur && items.contains(m_cur.data()) ? m_cur.data() : nullptr;
 
@@ -171,6 +180,9 @@ private:
     static bool clickable(QQuickItem *it)
     {
         if (it->inherits("QQuickMouseArea")) {
+            // MouseArea.enabled shadows QQuickItem's enabled property. isEnabled()
+            // alone still returns true for the disabled keyboard-dismiss catcher.
+            if (!it->property("enabled").toBool()) return false;
             const QVariant b = it->property("acceptedButtons");
             return !b.isValid() || b.toInt() != 0;
         }
@@ -187,7 +199,7 @@ private:
         std::stable_sort(kids.begin(), kids.end(), [](QQuickItem *a, QQuickItem *b) { return a->z() < b->z(); });
         for (int i = int(kids.size()) - 1; i >= 0; --i) {
             QQuickItem *c = kids.at(i);
-            if (!c->isVisible() || c->opacity() < 0.05 || dynamic_cast<KnobFrame *>(c)) continue;
+            if (!c->isVisible() || !c->isEnabled() || c->opacity() < 0.05 || dynamic_cast<KnobFrame *>(c)) continue;
             if (!c->contains(c->mapFromScene(scenePt))) { if (c->clip()) continue; }
             if (QQuickItem *hit = topAt(c, scenePt)) return hit;
         }
@@ -206,17 +218,19 @@ private:
         return false;
     }
 
-    static void collect(QQuickItem *it, const QRectF &screen, QList<QQuickItem *> &out)
+    static void collect(QQuickItem *it, const QRectF &screen, QList<QQuickItem *> &out, const QRectF &clip)
     {
         if (!it->isVisible() || !it->isEnabled() || it->opacity() < 0.05) return;
         if (dynamic_cast<KnobFrame *>(it)) return;
+        const QRectF visibleArea = it->clip() ? clip.intersected(sceneRect(it)) : clip;
+        if (visibleArea.isEmpty()) return;
         if (clickable(it)) {
             const QRectF r = sceneRect(it);
-            if (r.width() >= 20 && r.height() >= 20 && screen.contains(r.center())
+            if (r.width() >= 20 && r.height() >= 20 && visibleArea.contains(r.center())
                 && r.width() * r.height() < 0.45 * screen.width() * screen.height())
                 out << it;
         }
-        for (QQuickItem *c : it->childItems()) collect(c, screen, out);
+        for (QQuickItem *c : it->childItems()) collect(c, screen, out, visibleArea);
     }
 
     QList<QQuickItem *> candidates(QQuickWindow *w) const
@@ -226,9 +240,10 @@ private:
         // offenes Popup/Menue (Overlay): nur dessen Inhalt
         QQuickItem *scope = root;
         std::function<QQuickItem *(QQuickItem *)> overlay = [&](QQuickItem *it) -> QQuickItem * {
+            if (!it->isVisible() || !it->isEnabled() || it->opacity() < 0.05) return nullptr;
             if (it->inherits("QQuickOverlay")) {
                 for (QQuickItem *c : it->childItems())
-                    if (c->isVisible() && c->width() > 0 && c->height() > 0) return it;
+                    if (c->isVisible() && c->isEnabled() && c->opacity() >= 0.05 && c->width() > 0 && c->height() > 0) return it;
                 return nullptr;
             }
             for (QQuickItem *c : it->childItems()) if (QQuickItem *o = overlay(c)) return o;
@@ -236,7 +251,7 @@ private:
         };
         if (QQuickItem *o = overlay(root)) scope = o;
         QList<QQuickItem *> all;
-        collect(scope, screen, all);
+        collect(scope, screen, all, screen);
         QList<QQuickItem *> out;
         for (QQuickItem *it : all) {
             const QPointF c = centre(it);
@@ -253,6 +268,8 @@ private:
         if (!it) return;
         m_cur = it;
         m_lastPos = centre(it);
+        qInfo().noquote() << "[knob] selected" << it->metaObject()->className()
+                         << it->objectName() << sceneRect(it);
         showFrame(true);
     }
 
@@ -289,6 +306,7 @@ private:
 
     void click(QQuickWindow *w, QQuickItem *it)
     {
+        qInfo().noquote() << "[knob] activate" << it->metaObject()->className() << it->objectName();
         const QPointF p = centre(it);
         const QPointF g = w->mapToGlobal(p);
         m_synth = true;
@@ -335,7 +353,7 @@ void voltaPortRegisterKnob()
 {
     QTimer::singleShot(0, qApp, []() { qApp->installEventFilter(new KnobNavigator(qApp)); });
 #ifdef Q_OS_ANDROID
-    QTimer::singleShot(3000, qApp, []() {
+    QTimer::singleShot(0, qApp, []() {
         QJniEnvironment env;
         QJniObject::callStaticMethod<void>("de/jarvis/volta/KnobInput", "install", "(Landroid/app/Activity;)V",
                                            QNativeInterface::QAndroidApplication::context().object());

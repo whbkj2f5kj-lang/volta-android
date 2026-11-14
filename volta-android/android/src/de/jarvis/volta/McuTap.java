@@ -1,8 +1,10 @@
 package de.jarvis.volta;
 
 import android.content.Context;
+import de.jarvis.w204.volta.VendorListeners;
 import android.database.ContentObserver;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.provider.Settings;
 
@@ -31,11 +33,20 @@ final class McuTap {
 
     private static Object listener; // starke Referenz, sonst raeumt der Speicherbereiniger den Rueckruf weg
     private static int frames = 0;
+    private static Handler worker;
 
     private McuTap() {}
 
-    static void start(final Context app) {
+    static synchronized void start(final Context app) {
+        if (worker != null) return;
         watchHandbrake(app);
+        HandlerThread thread = new HandlerThread("VoltaMcuService", android.os.Process.THREAD_PRIORITY_BACKGROUND);
+        thread.start();
+        worker = new Handler(thread.getLooper());
+        worker.post(() -> subscribe(app));
+    }
+
+    private static void subscribe(Context app) {
         try {
             Class<?> mgr = Class.forName(MANAGER);
             Class<?> lis = Class.forName(LISTENER);
@@ -51,12 +62,7 @@ final class McuTap {
                         && m.getParameterTypes()[0] == lis) request = m;
             if (request == null) { CanListener.logLine("MCU: RPC_RequestMcuInfoChangedListener fehlt"); return; }
 
-            Object target = null;
-            if (!Modifier.isStatic(request.getModifiers())) {
-                target = instance(mgr, app);
-                if (target == null) { CanListener.logLine("MCU: kein McuManager-Objekt erhalten"); return; }
-            }
-            listener = Proxy.newProxyInstance(lis.getClassLoader(), new Class<?>[]{lis}, new InvocationHandler() {
+            Object candidate = Proxy.newProxyInstance(lis.getClassLoader(), new Class<?>[]{lis}, new InvocationHandler() {
                 @Override public Object invoke(Object proxy, Method m, Object[] args) {
                     String n = m.getName();
                     if (n.equals("hashCode")) return System.identityHashCode(proxy);
@@ -66,12 +72,13 @@ final class McuTap {
                     return defaultValue(m.getReturnType());
                 }
             });
-            request.invoke(target, listener);
-            CanListener.logLine("MCU: Mitlesen angemeldet (" + (target == null ? "statisch" : target.getClass().getName()) + ")");
+            if (VendorListeners.subscribe(mgr, request, candidate, app,
+                    new String[]{"mcu_service", "mcuservice", "mcu"}, app::getSystemService,
+                    message -> CanListener.logLine("MCU: " + message))) listener = candidate;
         } catch (ClassNotFoundException e) {
             CanListener.logLine("MCU: Schnittstelle nicht vorhanden (" + e.getMessage() + ")");
         } catch (Throwable t) {
-            CanListener.logLine("MCU: Anmeldung fehlgeschlagen: " + t);
+            CanListener.logLine("MCU: Anmeldung fehlgeschlagen: " + VendorListeners.describe(t));
         }
     }
 
@@ -86,34 +93,6 @@ final class McuTap {
         CanListener.logFrame(key.toString(), kind, b);
         if (cmd == 0x23 && b.length > 6) CanListener.putValue("handbrakeMcu", b[6] & 0xff);
         if (frames == 1) CanListener.logLine("MCU: erster Rahmen empfangen");
-    }
-
-    private static Object instance(Class<?> mgr, Context app) {
-        String[] names = {"getInstance", "getDefault", "get"};
-        for (String n : names) {
-            for (Method m : mgr.getMethods()) {
-                if (!m.getName().equals(n) || !Modifier.isStatic(m.getModifiers())) continue;
-                Class<?>[] p = m.getParameterTypes();
-                try {
-                    if (p.length == 0) return m.invoke(null);
-                    if (p.length == 1 && p[0].isAssignableFrom(Context.class)) return m.invoke(null, app);
-                } catch (Throwable t) { CanListener.logLine("MCU: " + n + " fehlgeschlagen: " + t); }
-            }
-        }
-        try { return mgr.getConstructor(Context.class).newInstance(app); } catch (Throwable ignored) {}
-        try { return mgr.getConstructor().newInstance(); } catch (Throwable ignored) {}
-        // Die Firmware-Apps holen ihn als Systemdienst: getSystemService("mcu_service")
-        for (String name : new String[]{"mcu_service", "mcuservice", "mcu"}) {
-            try {
-                Object svc = app.getSystemService(name);
-                if (mgr.isInstance(svc)) return svc;
-                if (svc != null) CanListener.logLine("MCU: Dienst " + name + " ist " + svc.getClass().getName());
-            } catch (Throwable ignored) {}
-        }
-        StringBuilder sb = new StringBuilder("MCU: Konstruktoren:");
-        for (java.lang.reflect.Constructor<?> c : mgr.getDeclaredConstructors()) sb.append(' ').append(c);
-        CanListener.logLine(sb.toString());
-        return null;
     }
 
     /** Einmal ins Log: welche Methoden die Firmware wirklich anbietet (fuer die naechste Auswertung). */
@@ -148,7 +127,10 @@ final class McuTap {
 
     private static Object defaultValue(Class<?> t) {
         if (t == boolean.class) return false;
-        if (t == int.class || t == short.class || t == byte.class) return 0;
+        if (t == int.class) return 0;
+        if (t == short.class) return (short)0;
+        if (t == byte.class) return (byte)0;
+        if (t == char.class) return (char)0;
         if (t == long.class) return 0L;
         if (t == float.class) return 0f;
         if (t == double.class) return 0d;
