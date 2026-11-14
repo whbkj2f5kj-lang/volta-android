@@ -184,9 +184,11 @@ object VoltaCar {
                                 lines += "Diagnose fehlgeschlagen: " + (t.message ?: t.javaClass.simpleName)
                             }
                         }
+                        val honest = adapterSection(elm, lines)
                         checkCandidate("5G-Tronic/722.6, Getriebeoeltemperatur-Kandidat",
                             "7E1", "7E9", MercedesDiagnostics.TRANSMISSION_TEMP_CANDIDATE)
                         crd3Section(elm, manager, lines)
+                        if (honest != false) kwpSection(elm, lines)
                     } finally {
                         elm.trace = null
                         lines += ""
@@ -206,6 +208,90 @@ object VoltaCar {
                 ObdLog.block("Mercedes-Test", diagnosticText)
                 diagnosticsRunning.set(false)
             }
+        }
+    }
+
+    /**
+     * Bisher blieb JEDE Mercedes-Anfrage (22xx, 2130) ohne Antwort - nicht einmal eine Ablehnung.
+     * Ein Steuergeraet, das direkt angesprochen wird, lehnt Unbekanntes aber ab (7F ..). Voellige Stille
+     * passt zu einem Adapter, der die Zieladresse (ATSH) ignoriert und alles als Rundruf (7DF) sendet:
+     * auf Rundrufe antworten Steuergeraete bei unbekannten Anfragen gar nicht.
+     * Pruefung, nur lesend: 0100 an 7E5 senden - dort wohnt niemand. Antwortet trotzdem der Motor (7E8),
+     * ignoriert der Adapter die Adresse. Rueckgabe: true = adressiert richtig, false = nicht, null = unklar.
+     */
+    private fun adapterSection(elm: de.jarvis.w204.obd.SafeElm, lines: MutableList<String>): Boolean? {
+        lines += ""
+        lines += "== Adapter-Pruefung: spricht der Adapter wirklich einzelne Steuergeraete an? =="
+        fun flat(s: String) = s.replace("\r", " | ").replace("\n", " | ")
+        fun at(cmd: String): String = try { elm.probe(cmd).trim() } catch (e: Exception) { "FEHLER ${e.message ?: e.javaClass.simpleName}" }
+        return try {
+            for (c in listOf("ATI", "AT@1", "ATDP")) lines += "$c => ${flat(at(c))}"
+            at("ATH1"); at("ATCRA")
+            fun responders(tx: String): List<String> {
+                at("ATSH$tx")
+                val r = try { elm.request("0100", 2000).trim() } catch (e: Exception) { "FEHLER ${e.message ?: e.javaClass.simpleName}" }
+                lines += "Ziel $tx, Anfrage 0100 => ${flat(r)}"
+                return (0x7E8..0x7EF).filter { id -> de.jarvis.w204.obd.CanDiagnostic.messages(r, id).any { it.startsWith("4100") } }
+                    .map { "%03X".format(it) }
+            }
+            val broadcast = responders("7DF")
+            val ghost = responders("7E5")
+            val engine = responders("7E0")
+            val verdict: Boolean? = when {
+                broadcast.isEmpty() && engine.isEmpty() -> null
+                ghost.any { it != "7ED" } -> false
+                engine.isEmpty() -> null
+                else -> true
+            }
+            lines += "Rundruf beantwortet von: ${broadcast.ifEmpty { listOf("niemand") }.joinToString()} | " +
+                "Ziel 7E5 (unbelegt) beantwortet von: ${ghost.ifEmpty { listOf("niemand") }.joinToString()} | " +
+                "Ziel 7E0 beantwortet von: ${engine.ifEmpty { listOf("niemand") }.joinToString()}"
+            lines += when (verdict) {
+                false -> "ERGEBNIS ADAPTER: ignoriert die Zieladresse (ATSH). Alle Anfragen gehen als Rundruf raus - " +
+                    "Mercedes-Werte (DPF, Getriebe) sind mit DIESEM Adapter nicht lesbar. Ein echter ELM327 v1.4+/STN-Adapter " +
+                    "(z. B. OBDLink, vLinker) ist noetig."
+                true -> "ERGEBNIS ADAPTER: adressiert richtig. Die Stille bei Mercedes-Anfragen kommt vom Fahrzeug " +
+                    "(Gateway/Protokoll), nicht vom Adapter."
+                null -> "ERGEBNIS ADAPTER: unklar (keine verwertbare Antwort auf 0100)."
+            }
+            verdict
+        } catch (e: Exception) {
+            lines += "Adapter-Pruefung fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}"
+            null
+        }
+    }
+
+    /**
+     * Antwortet das Steuergeraet ueberhaupt auf Hersteller-Dienste? Motor (7E0) und Getriebe (7E1), nur lesen:
+     * 21 01 (KWP-Messwertblock), 1A 86 (Geraetekennung), 22 F1 87 (Teilenummer). Auch eine Ablehnung (7F ..)
+     * ist ein Erfolg: dann hoert das Steuergeraet zu. Antwortet Dienst 21, werden die Bloecke 01..7F je einmal
+     * gelesen und roh protokolliert (Grundlage fuer DPF-/Getriebewerte). Kein Schreiben, keine Sitzung, kein Dauerabruf.
+     */
+    private fun kwpSection(elm: de.jarvis.w204.obd.SafeElm, lines: MutableList<String>) {
+        lines += ""
+        lines += "== Hoert das Steuergeraet auf Hersteller-Dienste? (nur lesen) =="
+        for ((tx, name) in listOf("7E0" to "Motor", "7E1" to "Getriebe")) {
+            try { elm.target(tx) } catch (e: Exception) { lines += "$name: Route nicht einstellbar: ${e.message}"; continue }
+            var alive21 = false
+            for (cmd in listOf("2101", "1A86", "22F187")) {
+                val r = try { elm.request(cmd, 1500).trim() } catch (e: Exception) { "FEHLER ${e.message ?: e.javaClass.simpleName}" }
+                lines += "$name $tx $cmd => ${r.replace("\r", " | ")}"
+                val a = DiagnosticAnswer.select(r, cmd)
+                if (cmd == "2101" && (a.kind == DiagnosticAnswer.Kind.POSITIVE ||
+                        (a.kind == DiagnosticAnswer.Kind.NEGATIVE && a.pdu.takeLast(2) != "11"))) alive21 = true
+            }
+            if (!alive21) { lines += "$name: Dienst 21 unbeantwortet oder nicht vorhanden - kein Block-Durchlauf."; continue }
+            lines += "$name: Dienst 21 antwortet -> Bloecke 01..7F je einmal lesen (Rohdaten, unbewertet)"
+            var hits = 0; var silent = 0
+            for (id in 0x01..0x7F) {
+                val cmd = "21%02X".format(id)
+                val r = try { elm.request(cmd, 700).trim() } catch (e: Exception) { "FEHLER ${e.message ?: e.javaClass.simpleName}" }
+                val a = DiagnosticAnswer.select(r, cmd)
+                if (a.kind == DiagnosticAnswer.Kind.POSITIVE) { hits++; silent = 0; lines += "$cmd => ${a.pdu}" }
+                else if (a.kind != DiagnosticAnswer.Kind.NEGATIVE) { if (++silent >= 8) { lines += "abgebrochen nach 8 stummen Anfragen in Folge"; break } }
+                else silent = 0
+            }
+            lines += "$name: $hits Bloecke mit Daten"
         }
     }
 

@@ -39,6 +39,7 @@ public final class CanListener {
     private static boolean started = false;
     private static int lines = 0;
     private static final HashMap<String, String> last = new HashMap<>();
+    private static final HashMap<String, Long> lastAt = new HashMap<>();
     private static final SimpleDateFormat time = new SimpleDateFormat("HH:mm:ss.SSS", Locale.GERMANY);
 
     public static synchronized void start(Context ctx) {
@@ -68,12 +69,22 @@ public final class CanListener {
     static void logFrame(String key, String kind, byte[] data) { frameKeyed(key, kind, data); }
     static void putValue(String k, double v) { put(k, v); }
 
+    private static java.io.BufferedWriter out;
+    private static long lastFlush = 0;
+
+    /** Datei offen halten und hoechstens alle 2 s auf den Speicher schreiben (vorher: je Zeile oeffnen/schliessen). */
     private static synchronized void log(String s) {
         if (file == null || lines > 20000) return;
         lines++;
-        try (FileWriter w = new FileWriter(file, true)) {
-            w.write(time.format(new Date()) + "  " + s + "\n");
-        } catch (Throwable ignored) {}
+        try {
+            if (out == null) out = new java.io.BufferedWriter(new FileWriter(file, true), 16384);
+            out.write(time.format(new Date()) + "  " + s + "\n");
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (now - lastFlush > 2000 || lines < 40) { out.flush(); lastFlush = now; }
+        } catch (Throwable t) {
+            try { if (out != null) out.close(); } catch (Throwable ignored) {}
+            out = null;
+        }
     }
 
     private static String hex(byte[] b) {
@@ -95,6 +106,13 @@ public final class CanListener {
         String h = hex(data);
         synchronized (last) {
             if (h.equals(last.get(key))) return;
+            // Tempo/Drehzahl aendern sich staendig: je Art hoechstens eine Zeile pro Sekunde, sonst ist das
+            // Protokoll nach wenigen Minuten Fahrt voll (und der Upload frisst Datenvolumen).
+            long now = android.os.SystemClock.elapsedRealtime();
+            Long t = lastAt.get(key);
+            boolean busyKind = kind.startsWith("Fahrzeug") || kind.startsWith("CAN") || kind.startsWith("Lenkwinkel") || kind.startsWith("MCU");
+            if (busyKind && t != null && now - t < 1000) return;   // Tueren, Klima, Radar usw. immer sofort
+            lastAt.put(key, now);
             last.put(key, h);
         }
         log(kind + " [" + (data == null ? 0 : data.length) + "] " + h);
@@ -292,10 +310,11 @@ public final class CanListener {
         ctx.getApplicationContext().getSharedPreferences("volta_can", Context.MODE_PRIVATE).edit().putBoolean("doorSwap", on).apply();
     }
 
+    private static java.lang.reflect.Method propGet;   // einmal suchen: snapshot() laeuft 4x pro Sekunde
     private static String prop(String k) {
         try {
-            Class<?> sp = Class.forName("android.os.SystemProperties");
-            return String.valueOf(sp.getMethod("get", String.class).invoke(null, k));
+            if (propGet == null) propGet = Class.forName("android.os.SystemProperties").getMethod("get", String.class);
+            return String.valueOf(propGet.invoke(null, k));
         } catch (Throwable t) { return ""; }
     }
 

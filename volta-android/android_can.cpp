@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QQmlEngine>
+#include <QElapsedTimer>
 #include <QTimer>
 #include <QVariantMap>
 #ifdef Q_OS_ANDROID
@@ -21,16 +22,16 @@ class VoltaCanQml : public QObject {
     Q_PROPERTY(QVariantMap seen READ seen NOTIFY changed)
     Q_PROPERTY(bool doorSwap READ doorSwap NOTIFY changed)
     // fertig aufbereitet fuer die Anzeigen
-    Q_PROPERTY(bool reverse READ reverse NOTIFY changed)
-    Q_PROPERTY(bool hasSpeed READ hasSpeed NOTIFY changed)
-    Q_PROPERTY(int speed READ speed NOTIFY changed)
+    Q_PROPERTY(bool reverse READ reverse NOTIFY derivedChanged)
+    Q_PROPERTY(bool hasSpeed READ hasSpeed NOTIFY speedChanged)
+    Q_PROPERTY(int speed READ speed NOTIFY speedChanged)
     Q_PROPERTY(bool hasDoors READ hasDoors NOTIFY changed)
     Q_PROPERTY(QString tempLeft READ tempLeft NOTIFY changed)
     Q_PROPERTY(QString tempRight READ tempRight NOTIFY changed)
     Q_PROPERTY(double odometerKm READ odometerKm NOTIFY changed)
-    Q_PROPERTY(bool lightsOn READ lightsOn NOTIFY changed)
-    Q_PROPERTY(QString gear READ gear NOTIFY changed)
-    Q_PROPERTY(bool beltWarning READ beltWarning NOTIFY changed)
+    Q_PROPERTY(bool lightsOn READ lightsOn NOTIFY derivedChanged)
+    Q_PROPERTY(QString gear READ gear NOTIFY derivedChanged)
+    Q_PROPERTY(bool beltWarning READ beltWarning NOTIFY derivedChanged)
 public:
     explicit VoltaCanQml(QObject *parent) : QObject(parent)
     {
@@ -90,11 +91,22 @@ public:
     }
 
 signals:
+    // changed: alles Langsame (Tueren, Licht, Klima ...) sofort; reine Tempo-/Drehzahl-Aenderungen hoechstens 1x/s.
+    // Sonst rechnen waehrend der Fahrt ~80 Anzeigen 4x pro Sekunde neu (jede wandelt die ganze Werteliste um).
     void changed();
+    void speedChanged();     // speed, hasSpeed: sofort
+    void derivedChanged();   // gear, reverse, lightsOn, beltWarning: nur bei echter Aenderung
 
 private:
+    QString derivedKey() const
+    {
+        return m_gear + QLatin1Char(reverse() ? 'r' : '-') + QLatin1Char(lightsOn() ? 'l' : '-') + QLatin1Char(beltWarning() ? 'b' : '-');
+    }
+
     void poll()
     {
+        // zurueckgehaltene Tempo-/Drehzahl-Aenderung nachreichen, auch wenn danach nichts mehr kommt
+        if (m_pendingEmit && m_lastEmit.elapsed() >= 1000) { m_lastEmit.restart(); m_pendingEmit = false; emit changed(); }
 #ifdef Q_OS_ANDROID
         QJniEnvironment env;
         const QString raw = QJniObject::callStaticObjectMethod("de/jarvis/volta/CanListener", "snapshot",
@@ -103,14 +115,26 @@ private:
         m_last = raw;
         const QJsonObject o = QJsonDocument::fromJson(raw.toUtf8()).object();
         if (o.isEmpty()) return;
-        const bool was = m_connected;
+        const bool was = m_connected, wasSwap = m_doorSwap, wasHasSpeed = hasSpeed();
+        const int wasSpeed = speed();
+        const QString wasDerived = derivedKey();
+        const QVariantMap oldSeen = m_seen;
+        QVariantMap slowOld = m_values;
         m_connected = o.value(QLatin1String("bound")).toBool();
         m_doorSwap = o.value(QLatin1String("doorSwap")).toBool();
         m_values = o.value(QLatin1String("values")).toObject().toVariantMap();
         m_seen = o.value(QLatin1String("seen")).toObject().toVariantMap();
         updateGear();
         if (was != m_connected) qInfo() << "[can] radio vehicle service" << (m_connected ? "connected" : "not connected");
-        emit changed();
+        if (speed() != wasSpeed || hasSpeed() != wasHasSpeed) emit speedChanged();
+        if (derivedKey() != wasDerived) emit derivedChanged();
+        QVariantMap slowNew = m_values;
+        for (const char *fast : {"speed", "rpm", "rpmFlags", "consumptionNow", "avgSpeed1", "driveTime1", "trip1", "trip2", "trip3", "fuel", "rest", "range", "odometerRaw"}) {
+            slowOld.remove(QLatin1String(fast)); slowNew.remove(QLatin1String(fast));
+        }
+        const bool slow = slowOld != slowNew || oldSeen != m_seen || was != m_connected || wasSwap != m_doorSwap;
+        if (slow || !m_lastEmit.isValid() || m_lastEmit.elapsed() >= 1000) { m_lastEmit.restart(); m_pendingEmit = false; emit changed(); }
+        else m_pendingEmit = true;
 #endif
     }
 
@@ -128,7 +152,8 @@ private:
 
     QTimer m_timer;
     QString m_last, m_gear;
-    bool m_moved = false;
+    bool m_moved = false, m_pendingEmit = false;
+    QElapsedTimer m_lastEmit;
     bool m_connected = false, m_doorSwap = false;
     QVariantMap m_values, m_seen;
 };

@@ -106,9 +106,22 @@ public final class KnobInput {
                         else if (p.length == 1 && p[0].isAssignableFrom(android.content.Context.class)) target = m.invoke(null, a.getApplicationContext());
                     } catch (Throwable ignored) {}
                 }
+                // Die Firmware-Apps holen ihn als Systemdienst: getSystemService("util_service")
+                if (target == null) for (String name : new String[]{"util_service", "util_event", "utils"}) {
+                    try {
+                        Object svc = a.getApplicationContext().getSystemService(name);
+                        if (mgr.isInstance(svc)) { target = svc; break; }
+                        if (svc != null) log("Dienst " + name + " ist " + svc.getClass().getName());
+                    } catch (Throwable ignored) {}
+                }
                 if (target == null) try { target = mgr.getConstructor(android.content.Context.class).newInstance(a.getApplicationContext()); } catch (Throwable ignored) {}
                 if (target == null) try { target = mgr.getConstructor().newInstance(); } catch (Throwable ignored) {}
-                if (target == null) { log("kein UtilEventManager-Objekt"); return; }
+                if (target == null) {
+                    StringBuilder cs = new StringBuilder("kein UtilEventManager-Objekt; Konstruktoren:");
+                    for (java.lang.reflect.Constructor<?> c : mgr.getDeclaredConstructors()) cs.append(' ').append(c);
+                    log(cs.toString());
+                    return;
+                }
             }
             radioListener = Proxy.newProxyInstance(lis.getClassLoader(), new Class<?>[]{lis}, new InvocationHandler() {
                 @Override public Object invoke(Object p, Method m, Object[] args) {
@@ -166,6 +179,8 @@ public final class KnobInput {
 
     private static void log(KeyEvent e) {
         if (e.getAction() != KeyEvent.ACTION_DOWN || e.getRepeatCount() > 0) return;
+        // Getippter Text (Buchstaben, Ziffern, Zeichen) gehoert nicht ins Log - es wird hochgeladen.
+        if (e.isPrintingKey()) return;
         log("Taste " + KeyEvent.keyCodeToString(e.getKeyCode()) + " (" + e.getKeyCode() + ") scan=" + e.getScanCode()
                 + " Quelle=0x" + Integer.toHexString(e.getSource()) + " Geraet=" + deviceName(e.getDeviceId()));
     }

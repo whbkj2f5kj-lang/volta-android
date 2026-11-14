@@ -119,6 +119,18 @@ public:
             return;
         }
         qInfo().noquote() << "[update] installing" << m_remote.left(8);
+        setState(QStringLiteral("ready"), QStringLiteral("preparing installation…"));
+        // das Kopieren laeuft im Hintergrund: Fehler danach abholen
+        for (int ms : {3000, 8000, 20000})
+            QTimer::singleShot(ms, this, [this]() {
+                QJniEnvironment e;
+                const QString late = QJniObject::callStaticObjectMethod(kUpdater, "lastError", "()Ljava/lang/String;").toString();
+                if (e.checkAndClearExceptions()) return;
+                if (!late.isEmpty()) {
+                    if (m_message != QStringLiteral("install failed: ") + late) qWarning().noquote() << "[update] install failed:" << late;
+                    setState(QStringLiteral("ready"), QStringLiteral("install failed: ") + late);
+                } else if (m_message == QStringLiteral("preparing installation…")) setState(QStringLiteral("ready"));
+            });
 #endif
     }
 

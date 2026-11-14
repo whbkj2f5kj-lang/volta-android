@@ -20,6 +20,10 @@ import java.io.OutputStream;
 public final class Updater {
     private static final String ACTION = "de.jarvis.volta.UPDATE_STATUS";
     private static boolean registered = false;
+    private static volatile String lastError = "";
+
+    /** Fehler des letzten Installationsversuchs (laeuft im Hintergrund), "" = keiner. */
+    public static String lastError() { return lastError; }
 
     public static boolean canInstall(Context ctx) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true;
@@ -57,24 +61,33 @@ public final class Updater {
                     registered = true;
                 }
             }
-            File apk = new File(path);
-            PackageInstaller pi = app.getPackageManager().getPackageInstaller();
-            PackageInstaller.SessionParams params =
-                    new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
-            params.setAppPackageName(app.getPackageName());
-            params.setSize(apk.length());
-            int id = pi.createSession(params);
-            PackageInstaller.Session s = pi.openSession(id);
-            try (InputStream in = new FileInputStream(apk); OutputStream out = s.openWrite("volta.apk", 0, apk.length())) {
-                byte[] buf = new byte[1 << 16];
-                int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-                s.fsync(out);
-            }
-            Intent cb = new Intent(ACTION).setPackage(app.getPackageName());
-            PendingIntent pend = PendingIntent.getBroadcast(app, id, cb, PendingIntent.FLAG_UPDATE_CURRENT);
-            s.commit(pend.getIntentSender());
-            s.close();
+            // Die APK (~90 MB) nicht auf dem Bedien-Faden kopieren: sonst friert Volta sekundenlang ein.
+            lastError = "";
+            new Thread(new Runnable() { @Override public void run() {
+                try {
+                    final File apk = new File(path);
+                    PackageInstaller pi = app.getPackageManager().getPackageInstaller();
+                    PackageInstaller.SessionParams params =
+                            new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+                    params.setAppPackageName(app.getPackageName());
+                    params.setSize(apk.length());
+                    int id = pi.createSession(params);
+                    PackageInstaller.Session s = pi.openSession(id);
+                    try (InputStream in = new FileInputStream(apk); OutputStream out = s.openWrite("volta.apk", 0, apk.length())) {
+                        byte[] buf = new byte[1 << 16];
+                        int n;
+                        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                        s.fsync(out);
+                    }
+                    Intent cb = new Intent(ACTION).setPackage(app.getPackageName());
+                    PendingIntent pend = PendingIntent.getBroadcast(app, id, cb, PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? 0x02000000 /* FLAG_MUTABLE */ : 0));
+                    s.commit(pend.getIntentSender());
+                    s.close();
+                } catch (Throwable t) {
+                    lastError = t.getClass().getSimpleName() + ": " + t.getMessage();
+                    Log.w("VoltaUpdate", "install failed: " + lastError);
+                }
+            } }, "volta-install").start();
             return "";
         } catch (Throwable t) {
             return t.getClass().getSimpleName() + ": " + t.getMessage();

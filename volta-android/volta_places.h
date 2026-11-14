@@ -217,9 +217,12 @@ class Services : public QObject {
                 if(job.key.startsWith("reverse-")) valid=doc.object()[job.url.host()=="api.tomtom.com" ? "addresses" : "features"].isArray();
                 if(job.key=="radarmeta") valid=!doc.object()["radar"].toObject()["past"].toArray().isEmpty();
                 if(r->error()!=QNetworkReply::NoError || status!=200 || !valid || bytes.size()>4*1024*1024) {
+                    // Grund mitschreiben (Netzfehler, echter HTTP-Status, Anfang der Antwort), sonst bleibt "502" ein Raetsel
+                    const QString why=QStringLiteral("%1 http=%2 net=%3 bytes=%4 %5").arg(job.url.host()).arg(status).arg(int(r->error())).arg(bytes.size())
+                        .arg(QString::fromUtf8(bytes.left(90)).simplified());
                     status = status>=400 ? status : 502; bytes.clear();
                     if(failedAt.size()>256) failedAt.clear(); failedAt[job.key]=QDateTime::currentSecsSinceEpoch();
-                    qWarning()<<"[places] provider request failed"<<job.key.section('-',0,0)<<status;
+                    qWarning().noquote()<<"[places] provider request failed"<<job.key.section('-',0,0)<<status<<"-"<<why;
                 } else { save(job.key,bytes); failedAt.remove(job.key); }
                 const auto callbacks=waiters.take(job.key);
                 for (const auto &done: callbacks) done(status,bytes);
@@ -313,6 +316,15 @@ class Services : public QObject {
         QUrlQuery query;for(const auto &p:items) query.addQueryItem(p.first,p.second);url.setQuery(query);return url;
     }
     static QString key(const char *name) {return QString::fromUtf8(qgetenv(name)).trimmed();}
+    // TomTom kennt nur volle Kennungen wie de-DE; Qt liefert oft nur "de" -> HTTP 400.
+    static QString tomtomLanguage() {
+        static const QStringList known={"de-DE","en-GB","en-US","fr-FR","it-IT","es-ES","nl-NL","pl-PL","tr-TR","pt-PT","pt-BR","cs-CZ","da-DK","sv-SE","nb-NO","fi-FI","hu-HU","el-GR","ru-RU","ro-RO","sk-SK","sl-SI","hr-HR","bg-BG","uk-UA"};
+        const QString full=QLocale::system().name().replace(QLatin1Char('_'),QLatin1Char('-'));
+        if(known.contains(full)) return full;
+        const QString lang=full.section(QLatin1Char('-'),0,0);
+        for(const QString &k:known) if(k.startsWith(lang+QLatin1Char('-'))) return k;
+        return QStringLiteral("en-GB");
+    }
     static QJsonArray places(const QByteArray &bytes,bool tomtom,double lat,double lon) {
         QJsonArray out;
         const auto root=QJsonDocument::fromJson(bytes).object();
@@ -362,7 +374,7 @@ class Services : public QObject {
         if(api.isEmpty()){if(nearby) json(s,503,QJsonArray());else maptilerSearch(s,text,lat,lon);return;}
         const QUrl base=nearby ? QUrl("https://api.tomtom.com/search/2/nearbySearch/.json") : QUrl::fromEncoded("https://api.tomtom.com/search/2/search/"+QUrl::toPercentEncoding(text)+".json");
         auto items=QList<QPair<QString,QString>>{{"key",api},{"lat",QString::number(lat,'f',5)},{"lon",QString::number(lon,'f',5)},
-            {"limit","20"},{"language",QLocale::system().bcp47Name()}};
+            {"limit","20"},{"language",tomtomLanguage()}};
         if(nearby){items.emplaceBack("radius","15000");items.emplaceBack("categorySet",kind=="fuel" ? "7311" : "7315");}
         else items.emplaceBack("typeahead","true");
         const auto url=parameters(base,items);

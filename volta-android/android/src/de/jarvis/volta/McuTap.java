@@ -102,8 +102,17 @@ final class McuTap {
         }
         try { return mgr.getConstructor(Context.class).newInstance(app); } catch (Throwable ignored) {}
         try { return mgr.getConstructor().newInstance(); } catch (Throwable ignored) {}
-        Object svc = app.getSystemService("mcu");
-        if (mgr.isInstance(svc)) return svc;
+        // Die Firmware-Apps holen ihn als Systemdienst: getSystemService("mcu_service")
+        for (String name : new String[]{"mcu_service", "mcuservice", "mcu"}) {
+            try {
+                Object svc = app.getSystemService(name);
+                if (mgr.isInstance(svc)) return svc;
+                if (svc != null) CanListener.logLine("MCU: Dienst " + name + " ist " + svc.getClass().getName());
+            } catch (Throwable ignored) {}
+        }
+        StringBuilder sb = new StringBuilder("MCU: Konstruktoren:");
+        for (java.lang.reflect.Constructor<?> c : mgr.getDeclaredConstructors()) sb.append(' ').append(c);
+        CanListener.logLine(sb.toString());
         return null;
     }
 

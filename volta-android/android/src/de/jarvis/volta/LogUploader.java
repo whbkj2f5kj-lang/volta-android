@@ -35,6 +35,7 @@ public final class LogUploader {
     private static final String DEFAULT_REPO = "whbkj2f5kj-lang/volta-logs";
     private static final long PERIOD_MS = 5 * 60 * 1000L;
     private static final int MAX_BYTES = 4 * 1024 * 1024;
+    private static final long ZIP_FROM = 200 * 1024;
 
     private static Context app;
     private static SharedPreferences prefs;
@@ -154,9 +155,17 @@ public final class LogUploader {
             JSONObject shas = new JSONObject(prefs.getString("shas", "{}"));
             for (File f : files) {
                 String stamp = f.length() + ":" + f.lastModified();
-                String path = "logs/" + today + "/" + f.getName();
+                // Grosse Logs gepackt hochladen (Text schrumpft auf etwa ein Zehntel): spart mobiles
+                // Datenvolumen ueber den Handy-Hotspot und haelt das Repo klein.
+                boolean zip = f.length() > ZIP_FROM;
+                String path = "logs/" + today + "/" + device() + "/" + f.getName() + (zip ? ".gz" : "");
                 if (stamp.equals(prefs.getString("stamp:" + path, ""))) { same++; continue; }
                 byte[] data = tail(f);
+                if (zip) {
+                    ByteArrayOutputStream packed = new ByteArrayOutputStream();
+                    try (java.util.zip.GZIPOutputStream g = new java.util.zip.GZIPOutputStream(packed)) { g.write(data); }
+                    data = packed.toByteArray();
+                }
                 JSONObject body = new JSONObject()
                         .put("message", "Radio " + today + " " + clock.format(new Date()) + ": " + f.getName())
                         .put("content", Base64.encodeToString(data, Base64.NO_WRAP));
@@ -177,6 +186,12 @@ public final class LogUploader {
             }
             status = "Zuletzt " + clock.format(new Date()) + ": " + sent + " hochgeladen, " + same + " unverändert";
         } finally { busy = false; }
+    }
+
+    /** Eigener Ordner je Geraet (Radio, Emulator, Handy): sonst ueberschreiben sie sich gegenseitig die Logs. */
+    private static String device() {
+        String m = String.valueOf(android.os.Build.MODEL).trim().replaceAll("[^A-Za-z0-9._-]+", "-");
+        return m.isEmpty() ? "geraet" : m;
     }
 
     /** Ganze Datei, bei sehr grossen nur das Ende. */

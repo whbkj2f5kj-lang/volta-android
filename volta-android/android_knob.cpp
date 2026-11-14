@@ -310,6 +310,9 @@ private:
     void logKey(QKeyEvent *k)
     {
         if (k->isAutoRepeat() || m_logged > 300) return;
+        // Getippter Text (z. B. ein WLAN-Passwort ueber eine Tastatur) gehoert nicht ins Log - das wird hochgeladen.
+        const QString t = k->text();
+        if (!t.isEmpty() && t.at(0).isPrint() && !t.at(0).isSpace()) return;
         ++m_logged;
         qInfo().noquote() << QStringLiteral("[knob] Taste 0x%1 text='%2' mods=0x%3 nativeKey=%4 scan=%5")
                                  .arg(k->key(), 0, 16).arg(k->text()).arg(k->modifiers().toInt(), 0, 16)

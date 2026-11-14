@@ -1174,8 +1174,10 @@ def _lazy(path, header, app_ids, loader_id):
     out = ['        Loader {',
            '            id: %s' % loader_id,
            '            property bool ever: false',
-           '            active: ever || %s' % cond,
-           '            onLoaded: ever = true']
+           '            readonly property bool wanted: %s' % cond,
+           '            onWantedChanged: if (wanted) ever = true',
+           '            Component.onCompleted: if (wanted) ever = true',
+           '            active: ever']
     out += moved
     out += ['            sourceComponent: Component {',
             '            ' + header + ' {']
