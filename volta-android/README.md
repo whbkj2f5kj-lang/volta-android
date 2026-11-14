@@ -7,6 +7,16 @@ Der VoltaOS-Quellcode wird beim Build von GitHub geholt (fester Commit, siehe Wo
 
 Lizenz dieser Port-Schicht: GPL-3.0-or-later (wie VoltaOS).
 
+## Updates
+
+**Settings → System → Software update** zeigt die installierte Android-Version,
+einen festen Button **Check for updates**, den Download-Fortschritt und nach dem
+Download **Install update**. Der Installieren-Button bleibt dort erreichbar,
+auch wenn die Update-Benachrichtigung geschlossen wurde. Android verlangt die
+Installationsbestaetigung und gegebenenfalls die Freigabe fuer „unbekannte Apps“.
+Die bestehende automatische Pruefung laeuft 90 Sekunden nach dem Start und
+danach alle zehn Minuten weiter.
+
 ## Schritt 3: Reifendruck und Android-Anbindung
 
 USB-TPMS nutzt den vorhandenen W204-Empfänger (CH340/FTDI, 19200 Baud). In Vehicle → Tyre pressure aktivieren, USB-Zugriff erlauben und Sollwerte vom Fahrzeugaufkleber einstellen. Die vier Empfängerkanäle lassen sich den Rädern zuordnen; Sensor-Anlernen erfolgt am Empfänger. Unbekannte/veraltete Daten werden nicht als sichere Werte angezeigt. Warnungen erscheinen in Voltas vorhandenen Benachrichtigungen, ohne Sprachausgabe.

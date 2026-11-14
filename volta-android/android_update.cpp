@@ -32,6 +32,7 @@ class VoltaUpdateQml : public QObject {
     Q_PROPERTY(bool ready READ ready NOTIFY changed)
     Q_PROPERTY(QString remote READ remote NOTIFY changed)
     Q_PROPERTY(QString current READ current CONSTANT)
+    Q_PROPERTY(QString version READ version CONSTANT)
     Q_PROPERTY(int progress READ progress NOTIFY changed)
     Q_PROPERTY(QString message READ message NOTIFY changed)
 public:
@@ -53,6 +54,22 @@ public:
     bool ready() const { return m_state == QLatin1String("ready"); }
     QString remote() const { return m_remote.left(7); }
     QString current() const { return QString::fromLatin1(voltaPortStamp()); }
+    QString version() const
+    {
+#ifdef Q_OS_ANDROID
+        QJniEnvironment env;
+        const QJniObject ctx = QNativeInterface::QAndroidApplication::context();
+        const QJniObject pm = ctx.callObjectMethod("getPackageManager", "()Landroid/content/pm/PackageManager;");
+        const QJniObject name = ctx.callObjectMethod("getPackageName", "()Ljava/lang/String;");
+        const QJniObject info = pm.callObjectMethod("getPackageInfo",
+            "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;", name.object<jstring>(), jint(0));
+        const bool failed = env.checkAndClearExceptions();
+        if (!failed && info.isValid()) return info.getObjectField("versionName", "Ljava/lang/String;").toString();
+        return {};
+#else
+        return QCoreApplication::applicationVersion();
+#endif
+    }
     int progress() const { return m_progress; }
     QString message() const { return m_message; }
 

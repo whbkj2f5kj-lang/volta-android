@@ -1232,3 +1232,51 @@ patch("qml/Main.qml", [
      '            }\n'
      '            if (AndroidPort.android) uiPrefs.lowPower = true', 1),
 ])
+
+# Fixed update controls: usable even after the notification card was dismissed.
+patch("qml/Settings.qml", [
+    (r'''                Text \{
+                    text: qsTr\("System information and tools — section being expanded\."\)
+                    color: root\.txtHint; font\.pixelSize: 12
+                \}''', '''                SectionTitle { title: qsTr("Software update") }
+                Text {
+                    width: parent.width; wrapMode: Text.WordWrap
+                    text: qsTr("Installed version: %1").arg(VoltaUpdate.version || qsTr("Development"))
+                    color: root.txt; font.pixelSize: 15
+                }
+                Text {
+                    width: parent.width; wrapMode: Text.WordWrap
+                    text: VoltaUpdate.message !== "" ? VoltaUpdate.message
+                        : VoltaUpdate.state === "checking" ? qsTr("Checking for updates…")
+                        : VoltaUpdate.state === "downloading" ? qsTr("Downloading update: %1%").arg(VoltaUpdate.progress)
+                        : VoltaUpdate.ready ? qsTr("Update ready. Android will ask you to confirm the installation.")
+                        : VoltaUpdate.state === "current" ? qsTr("Volta is up to date.")
+                        : qsTr("Volta checks automatically. You can also check for updates here.")
+                    color: root.txtHint; font.pixelSize: 13
+                }
+                Rectangle {
+                    visible: VoltaUpdate.state === "downloading"
+                    width: parent.width; height: 6; radius: 3; color: root.ctrlBg
+                    Rectangle {
+                        width: parent.width * Math.max(0, Math.min(100, VoltaUpdate.progress)) / 100
+                        height: parent.height; radius: parent.radius; color: root.blue
+                    }
+                }
+                Flow {
+                    width: parent.width; spacing: 12
+                    TSecondary {
+                        visible: !VoltaUpdate.ready
+                        enabled: VoltaUpdate.state !== "checking" && VoltaUpdate.state !== "downloading"
+                        opacity: enabled ? 1 : 0.5
+                        label: VoltaUpdate.state === "checking" ? qsTr("Checking…")
+                            : VoltaUpdate.state === "downloading" ? qsTr("Downloading…")
+                            : qsTr("Check for updates")
+                        onClicked: VoltaUpdate.check()
+                    }
+                    TSecondary {
+                        visible: VoltaUpdate.ready
+                        label: qsTr("Install update")
+                        onClicked: VoltaUpdate.install()
+                    }
+                }''', 1),
+])
