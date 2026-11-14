@@ -1287,3 +1287,32 @@ patch("qml/Settings.qml", [
                     }
                 }''', 1),
 ])
+
+# Keep knob selection within open settings / the app drawer, independently of the dock.
+for _knob_page in ("qml/Settings.qml", "qml/AppDrawer.qml"):
+    patch(_knob_page, [(r'^(    id: (?:root|drawer))\n',
+                       r'\1\n    property bool portKnobScope: true\n', 1)])
+
+patch("qml/Settings.qml", [(r'    property bool portKnobScope: true\n',
+    '    property bool portKnobScope: true\n    function portKnobBack() { if (root.hostWindow) root.hostWindow.activeApp = "" }\n', 1)])
+patch("qml/AppDrawer.qml", [(r'    property bool portKnobScope: true\n',
+    '    property bool portKnobScope: true\n    signal portKnobCloseRequested()\n    function portKnobBack() { drawer.portKnobCloseRequested() }\n', 1)])
+
+# Explicit keyboard/knob actions use the same signals as touch, without drag/press-delay state.
+patch("qml/AppDrawer.qml", [
+    (r'    MouseArea \{ anchors.fill: parent \}\n',
+     '    MouseArea { anchors.fill: parent; property bool portKnobIgnore: true }\n', 1),
+    (r'(\s*id: dragArea\n)', r'\1                            function portKnobActivate() { if (!drawer.editModeActive) drawer.appSelected(modelData.id) }\n', 1),
+])
+patch("qml/Settings.qml", [
+    (r'MouseArea \{ anchors.fill: parent; preventStealing: true \}',
+     'MouseArea { anchors.fill: parent; preventStealing: true; property bool portKnobIgnore: true }', 1),
+    (r'(        id: sbtn\n)', r'\1        function portKnobActivate() { sbtn.clicked() }\n', 1),
+    (r'(        id: pbtn\n)', r'\1        function portKnobActivate() { pbtn.clicked() }\n', 1),
+    (r'(        id: tgl\n)', r'\1        function portKnobActivate() { tgl.checked = !tgl.checked; tgl.toggled(tgl.checked) }\n', 1),
+    (r'(                            onTapped: root.pageIdx = index\n)',
+     r'\1                            function portKnobActivate() { root.pageIdx = index }\n', 1),
+])
+
+patch("qml/Main.qml", [(r'(        id: appDrawer\n)',
+    r'\1        onPortKnobCloseRequested: { dockBar.editMode = false; root.showGrid = false }\n', 1)])

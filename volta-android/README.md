@@ -7,6 +7,18 @@ Der VoltaOS-Quellcode wird beim Build von GitHub geholt (fester Commit, siehe Wo
 
 Lizenz dieser Port-Schicht: GPL-3.0-or-later (wie VoltaOS).
 
+## Bedienung mit dem Drehknopf
+
+In den Einstellungen bleiben Hoch/Runter in der aktuellen Spalte und scrollen
+das Menü bis zur nächsten Schaltfläche. Links/Rechts wechseln zwischen den
+Bereichen; Zurück/Escape schließt Einstellungen oder App-Drawer. Die App-Leiste
+unten ist kein Ersatzziel am Ende einer Menüliste. Enter aktiviert App-Symbole,
+Schaltflächen, Schalter und Kategorieeinträge über dieselben Aktionen wie Touch.
+Die erste Eingabe nach einer Pause zeigt zunächst den Auswahlrahmen.
+
+Der Build prüft Navigation, Scrollen und den tatsächlichen gepatchten App-Drawer.
+Der Startpfad und die Radio-/WebView-Anbindung aus 0.1.70 bleiben erhalten.
+
 ## Updates
 
 **Settings → System → Software update** zeigt die installierte Android-Version,

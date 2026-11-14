@@ -100,6 +100,15 @@ private:
     bool handle(QQuickWindow *w, QKeyEvent *k)
     {
         const int key = k->key();
+        if (key == Qt::Key_Back || key == Qt::Key_Escape) {
+            if (textFocus(w)) return false;
+            QQuickItem *scope = navigationRoot(w);
+            if (scope && scope->metaObject()->indexOfMethod("portKnobBack()") >= 0) {
+                QMetaObject::invokeMethod(scope,"portKnobBack",Qt::DirectConnection);
+                showFrame(false); m_cur.clear(); return true;
+            }
+            return false;
+        }
         enum { None, Next, Prev, Up, Down, Left, Right, Press } act = None;
         switch (key) {
         case Qt::Key_Tab: act = (k->modifiers() & Qt::ShiftModifier) ? Prev : Next; break;
@@ -132,6 +141,20 @@ private:
         // erster Dreh/Schub nach einer Pause: nur den Rahmen zeigen, nicht gleich springen
         if (!cur || !wasVisible) { select(cur ? cur : nearestTo(items, m_lastPos)); return true; }
 
+        // Vertical movement stays inside the current scroll lane. The dock and
+        // neighbouring settings column must not win when the next row is offscreen.
+        if (act == Up || act == Down) {
+            if (QQuickItem *flick = scrollParent(cur)) {
+                QList<QQuickItem *> rows;
+                if (QQuickItem *content = qvariant_cast<QQuickItem *>(flick->property("contentItem")))
+                    collect(content, screenRect(w), rows, sceneRect(content));
+                QQuickItem *next = directional(rows, cur, act == Down ? QPointF(0,1) : QPointF(0,-1));
+                if (next) { reveal(flick, next); select(next); }
+                else if (!scrollPage(flick, act == Down ? 1 : -1)) restartHide();
+                return true;
+            }
+        }
+
         if (act == Next || act == Prev) {
             QList<QQuickItem *> order = items;
             std::stable_sort(order.begin(), order.end(), [](QQuickItem *a, QQuickItem *b) {
@@ -145,6 +168,14 @@ private:
             return true;
         }
         const QPointF dir = act == Up ? QPointF(0, -1) : act == Down ? QPointF(0, 1) : act == Left ? QPointF(-1, 0) : QPointF(1, 0);
+        QQuickItem *best = directional(items, cur, dir);
+        if (best) select(best);
+        else restartHide();
+        return true;
+    }
+
+    static QQuickItem *directional(const QList<QQuickItem *> &items, QQuickItem *cur, QPointF dir)
+    {
         const QPointF c = centre(cur);
         QQuickItem *best = nullptr;
         double bestScore = 1e18;
@@ -157,13 +188,46 @@ private:
             const double score = along + 2.5 * across;
             if (score < bestScore) { bestScore = score; best = it; }
         }
-        if (best) select(best);
-        else restartHide();
-        return true;
+        return best;
     }
 
     static QPointF centre(QQuickItem *it) { return it->mapToScene(QPointF(it->width() / 2, it->height() / 2)); }
     static QRectF sceneRect(QQuickItem *it) { return it->mapRectToScene(QRectF(0, 0, it->width(), it->height())); }
+    static QRectF screenRect(QQuickWindow *w) { return QRectF(0,0,w->width(),w->height()); }
+
+    static QQuickItem *scrollParent(QQuickItem *it)
+    {
+        for (QQuickItem *p=it->parentItem();p;p=p->parentItem())
+            if (p->inherits("QQuickFlickable") && p->property("contentHeight").toDouble()>p->height()+1) return p;
+        return nullptr;
+    }
+    static void setScroll(QQuickItem *flick, double y)
+    {
+        QMetaObject::invokeMethod(flick,"cancelFlick",Qt::DirectConnection);
+        const double top=flick->property("originY").toDouble();
+        const double bottom=top+std::max(0.0,flick->property("contentHeight").toDouble()-flick->height());
+        flick->setProperty("contentY",std::clamp(y,top,bottom));
+    }
+    static void reveal(QQuickItem *flick,QQuickItem *it)
+    {
+        const QRectF r=flick->mapRectFromScene(sceneRect(it));
+        double delta=0;
+        if(r.bottom()>flick->height()-10) delta=r.bottom()-flick->height()+10;
+        if(r.top()<10) delta=r.top()-10;
+        if(delta!=0) setScroll(flick,flick->property("contentY").toDouble()+delta);
+    }
+    bool scrollPage(QQuickItem *flick,int direction)
+    {
+        const double old=flick->property("contentY").toDouble();
+        setScroll(flick,old+direction*std::max(40.0,flick->height()*0.65));
+        if(qAbs(flick->property("contentY").toDouble()-old)<1) return false;
+        const auto visible=candidates(m_win);
+        QList<QQuickItem *> rows;
+        for(auto *it:visible) if(ancestorOf(flick,it)) rows<<it;
+        if(!rows.isEmpty()) select(nearestTo(rows,m_lastPos));
+        else showFrame(false);
+        return true;
+    }
 
     static QQuickItem *nearestTo(const QList<QQuickItem *> &items, QPointF p)
     {
@@ -179,6 +243,7 @@ private:
 
     static bool clickable(QQuickItem *it)
     {
+        if (it->property("portKnobIgnore").toBool()) return false;
         if (it->inherits("QQuickMouseArea")) {
             // MouseArea.enabled shadows QQuickItem's enabled property. isEnabled()
             // alone still returns true for the disabled keyboard-dismiss catcher.
@@ -233,10 +298,9 @@ private:
         for (QQuickItem *c : it->childItems()) collect(c, screen, out, visibleArea);
     }
 
-    QList<QQuickItem *> candidates(QQuickWindow *w) const
+    QQuickItem *navigationRoot(QQuickWindow *w) const
     {
         QQuickItem *root = w->contentItem();
-        const QRectF screen(0, 0, w->width(), w->height());
         // offenes Popup/Menue (Overlay): nur dessen Inhalt
         QQuickItem *scope = root;
         std::function<QQuickItem *(QQuickItem *)> overlay = [&](QQuickItem *it) -> QQuickItem * {
@@ -250,6 +314,24 @@ private:
             return nullptr;
         };
         if (QQuickItem *o = overlay(root)) scope = o;
+        else {
+            std::function<QQuickItem *(QQuickItem *)> domain = [&](QQuickItem *it)->QQuickItem * {
+                if(!it->isVisible() || !it->isEnabled() || it->opacity()<0.05) return nullptr;
+                QList<QQuickItem *> children=it->childItems();
+                std::stable_sort(children.begin(),children.end(),[](QQuickItem *a,QQuickItem *b){return a->z()<b->z();});
+                for(auto i=children.crbegin();i!=children.crend();++i) if(auto *found=domain(*i)) return found;
+                return it->property("portKnobScope").toBool() ? it : nullptr;
+            };
+            if(auto *active=domain(root)) scope=active;
+        }
+        return scope;
+    }
+
+    QList<QQuickItem *> candidates(QQuickWindow *w) const
+    {
+        QQuickItem *root = w->contentItem();
+        const QRectF screen = screenRect(w);
+        QQuickItem *scope = navigationRoot(w);
         QList<QQuickItem *> all;
         collect(scope, screen, all, screen);
         QList<QQuickItem *> out;
@@ -307,6 +389,20 @@ private:
     void click(QQuickWindow *w, QQuickItem *it)
     {
         qInfo().noquote() << "[knob] activate" << it->metaObject()->className() << it->objectName();
+        // Prefer an explicit semantic action for drawer icons/settings controls.
+        // This avoids starting a drag or depending on a Flickable's press delay.
+        QObject *action = nullptr;
+        if (it->metaObject()->indexOfMethod("portKnobActivate()") >= 0) action = it;
+        for (QObject *child : it->children())
+            if (!action && child->inherits("QQuickTapHandler") && child->property("enabled").toBool()
+                    && child->metaObject()->indexOfMethod("portKnobActivate()") >= 0) action = child;
+        if (!action && it->parentItem() && it->parentItem()->metaObject()->indexOfMethod("portKnobActivate()") >= 0)
+            action = it->parentItem();
+        if (action) {
+            QMetaObject::invokeMethod(action,"portKnobActivate",Qt::DirectConnection);
+            afterClick();
+            return;
+        }
         const QPointF p = centre(it);
         const QPointF g = w->mapToGlobal(p);
         m_synth = true;
@@ -315,6 +411,11 @@ private:
         QMouseEvent release(QEvent::MouseButtonRelease, p, p, g, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
         QCoreApplication::sendEvent(w, &release);
         m_synth = false;
+        afterClick();
+    }
+
+    void afterClick()
+    {
         restartHide();
         // nach dem Tipp kann sich die Seite aendern: Rahmen kurz danach neu setzen
         QTimer::singleShot(400, this, [this]() {
